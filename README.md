@@ -62,7 +62,7 @@ For each configured set it:
 
 1. Fetches all paginated pages from the Scryfall `/cards/search` API
 2. Sorts cards by collector number
-3. Applies any configured collector number range filter
+3. Applies any configured collector number filter (`collectorRange` or `collectorList`)
 4. Preserves existing checkboxes (matched by set code + collector number)
 5. Writes a tab to the spreadsheet with:
    - **Column A** — checkbox (tick when you own it)
@@ -116,11 +116,26 @@ Place this file next to the script. All fields are optional except `spreadsheetI
 |---|---|---|
 | `code` | ✓ | Scryfall set code (lowercase), e.g. `"msh"` |
 | `tab` | ✓ | Tab name in the spreadsheet, e.g. `"MSH"` |
-| `collectorRange` | — | `[min, max]` — only include cards with collector numbers in this range |
+| `collectorRange` | — | `[min, max]` — only include cards with collector numbers in this numeric range |
+| `collectorList` | — | `["id1", "id2", …]` — explicit list of collector IDs (supports non-numeric IDs) |
 
-**Example — Special Guests, only cards 103–110:**
+Both filters are optional. If both are set on the same entry, `collectorRange` is applied first, then `collectorList`.
+
+**Example — Special Guests, only cards 103–110 (numeric range):**
 ```json
 { "code": "spg", "tab": "SPG", "collectorRange": [103, 110] }
+```
+
+**Example — MagicFest promos with non-numeric IDs:**
+```json
+{ "code": "pmei", "tab": "PMEI", "collectorList": ["2026-4", "2026-6", "2026-13", "2026-14", "2026-15", "2026-16"] }
+```
+
+You can find the set code and collector number for any card in its Scryfall URL:
+```
+https://scryfall.com/card/pmei/2026-16/captain-america-living-legend
+                               ^^^^  ^^^^^^
+                               code  collector number
 ```
 
 ---
