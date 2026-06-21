@@ -1,0 +1,14 @@
+{
+  "spreadsheetId": "1OIop791m5Cb9CNuTsVTCvpmnXwORYvT9_5Oldis82Fg",
+  "credentialsPath": "credentials.json",
+  "imageCol": null,
+  "sets": [
+    { "code": "msh",  "tab": "MSH"  },
+    { "code": "tmsh", "tab": "TMSH" },
+    { "code": "amsh", "tab": "AMSH" },
+    { "code": "msc",  "tab": "MSC"  },
+    { "code": "tmsc", "tab": "TMSC" },
+    { "code": "mar", "tab": "MAR" },
+    { "code": "fmsc", "tab": "FMSC" }
+  ]
+}

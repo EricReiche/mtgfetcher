@@ -1,0 +1,6 @@
+{
+  "dependencies": {
+    "csv-parse": "^7.0.0",
+    "googleapis": "^173.0.0"
+  }
+}
