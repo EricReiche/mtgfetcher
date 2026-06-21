@@ -2,6 +2,11 @@
 
 Downloads Magic: The Gathering card data from [Scryfall](https://scryfall.com) and writes it to a Google Sheet — one tab per set, with checkboxes to mark cards you own, card images, and a dashboard showing what you're still missing.
 
+
+![alt text](https://raw.githubusercontent.com/EricReiche/mtgfetcher/refs/heads/main/example-dashboard.jpg "Google Sheets dashboard example")
+
+![alt text](https://raw.githubusercontent.com/EricReiche/mtgfetcher/refs/heads/main/example-subset.jpg "Subset example")
+
 ---
 
 ## Requirements
