@@ -1,0 +1,9 @@
+# Google auth — never commit these
+credentials.json
+token.json
+
+# Config may contain your spreadsheet ID — optional, commit if you want to share the setup
+# marvel.json
+
+# Node
+node_modules/
