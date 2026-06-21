@@ -9,6 +9,12 @@
     { "code": "msc",  "tab": "MSC"  },
     { "code": "tmsc", "tab": "TMSC" },
     { "code": "mar", "tab": "MAR" },
-    { "code": "fmsc", "tab": "FMSC" }
+    { "code": "fmsc", "tab": "FMSC" },
+    { "code": "pw26",  "tab": "PW26", "collectorRange": [10, 13] },
+    { 
+      "code": "pmei", 
+      "tab": "PMEI", 
+      "collectorList": ["2026-4", "2026-6", "2026-13", "2026-14", "2026-15", "2026-16"]
+    }
   ]
 }

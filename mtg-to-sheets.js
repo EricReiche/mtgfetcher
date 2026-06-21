@@ -701,7 +701,7 @@ async function main() {
   const doneSets    = [];   // sets successfully written
   let   sharedHeaders = null; // CSV headers (same for all Scryfall tabs)
 
-  for (const { code, tab, collectorRange } of cfg.sets) {
+  for (const { code, tab, collectorRange, collectorList } of cfg.sets) {
     console.log(`[${tab}] Fetching set:${code}…`);
     let { headers, rows } = await fetchSet(code);
 
@@ -710,7 +710,7 @@ async function main() {
       continue;
     }
 
-    // Optional collector number range filter
+    // Filter by numeric range  e.g. collectorRange: [103, 110]
     if (collectorRange) {
       const [min, max] = collectorRange;
       const before = rows.length;
@@ -721,6 +721,19 @@ async function main() {
       console.log(`  Filtered to collector #${min}–${max}: ${rows.length}/${before} cards`);
       if (rows.length === 0) {
         console.log(`  Skipping "${tab}" — no cards in range.\n`);
+        continue;
+      }
+    }
+
+    // Filter by explicit ID list  e.g. collectorList: ["2026-4", "2026-6", "2026-13"]
+    // IDs are matched as strings, so works for numeric and non-numeric collector numbers.
+    if (collectorList) {
+      const allowed = new Set(collectorList.map(String));
+      const before = rows.length;
+      rows = rows.filter(r => allowed.has(String(r.collector_number)));
+      console.log(`  Filtered to ${allowed.size} listed IDs: ${rows.length}/${before} matched`);
+      if (rows.length === 0) {
+        console.log(`  Skipping "${tab}" — none of the listed collector IDs found.\n`);
         continue;
       }
     }
