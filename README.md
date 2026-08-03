@@ -181,6 +181,12 @@ Just run the script again. By default (`preserveChecks: true`) it will:
 
 To reset all checkboxes (e.g. starting a new collection), set `preserveChecks: false` in the config or run with `--preserve-checks` omitted and the config option set to false.
 
+### OAuth token expired or revoked (`invalid_grant`)
+
+The script validates its cached Google token before changing any sheet. If Google rejects it, the script removes `token.json` and opens a browser authorization flow automatically; complete that flow and it will save a replacement token.
+
+If this happens about every seven days, open your Google Cloud project’s **Google Auth platform → Audience** page and publish the OAuth app to **Production**. External apps in **Testing** receive refresh tokens that expire after seven days. This script requests only the Google Sheets scope, so a personal-use app normally does not need Google verification.
+
 ---
 
 ## Sheet layout

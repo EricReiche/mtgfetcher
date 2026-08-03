@@ -173,6 +173,28 @@ function loadConfig() {
 
 const SCOPES = ['https://www.googleapis.com/auth/spreadsheets'];
 
+function isInvalidGrantError(err) {
+  return err?.response?.data?.error === 'invalid_grant' || err?.code === 'invalid_grant';
+}
+
+async function authorizeInteractively(oAuth2, tokenPath) {
+  // prompt: 'consent' guarantees Google returns a fresh refresh token after a
+  // previously cached token was revoked or expired.
+  const authUrl = oAuth2.generateAuthUrl({ access_type: 'offline', prompt: 'consent', scope: SCOPES });
+  console.log('\nOpen this URL in your browser to authorise the app:\n');
+  console.log(authUrl + '\n');
+
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  const code = await new Promise(res => rl.question('Paste the auth code here: ', res));
+  rl.close();
+
+  const { tokens } = await oAuth2.getToken(code.trim());
+  oAuth2.setCredentials(tokens);
+  fs.writeFileSync(tokenPath, JSON.stringify(tokens, null, 2));
+  console.log(`Token cached in ${tokenPath}\n`);
+  return oAuth2;
+}
+
 async function authorize(credentialsPath, tokenPath) {
   if (!fs.existsSync(credentialsPath)) {
     console.error(`OAuth credentials file not found: ${credentialsPath}`);
@@ -186,22 +208,20 @@ async function authorize(credentialsPath, tokenPath) {
 
   if (fs.existsSync(tokenPath)) {
     oAuth2.setCredentials(JSON.parse(fs.readFileSync(tokenPath, 'utf8')));
-    return oAuth2;
+    try {
+      // Force a refresh even when a cached access token still has time left.
+      // This surfaces a revoked refresh token before Scryfall fetching or any
+      // Sheet write can begin.
+      await oAuth2.refreshAccessToken();
+      return oAuth2;
+    } catch (err) {
+      if (!isInvalidGrantError(err)) throw err;
+      console.warn(`Cached OAuth token in ${tokenPath} was rejected (invalid_grant); requesting a new authorization.`);
+      fs.unlinkSync(tokenPath);
+    }
   }
 
-  const authUrl = oAuth2.generateAuthUrl({ access_type: 'offline', scope: SCOPES });
-  console.log('\nOpen this URL in your browser to authorise the app:\n');
-  console.log(authUrl + '\n');
-
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  const code = await new Promise(res => rl.question('Paste the auth code here: ', res));
-  rl.close();
-
-  const { tokens } = await oAuth2.getToken(code.trim());
-  oAuth2.setCredentials(tokens);
-  fs.writeFileSync(tokenPath, JSON.stringify(tokens, null, 2));
-  console.log(`Token cached in ${tokenPath}\n`);
-  return oAuth2;
+  return authorizeInteractively(oAuth2, tokenPath);
 }
 
 // ── SCRYFALL FETCH ────────────────────────────────────────────────────────────
@@ -752,4 +772,8 @@ async function main() {
   console.log('\nDone!');
 }
 
-main().catch(err => { console.error(err.message ?? err); process.exit(1); });
+if (require.main === module) {
+  main().catch(err => { console.error(err.message ?? err); process.exit(1); });
+}
+
+module.exports = { authorize, isInvalidGrantError };
