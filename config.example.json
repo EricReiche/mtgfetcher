@@ -11,10 +11,18 @@
     { "code": "mar", "tab": "MAR" },
     { "code": "fmsc", "tab": "FMSC" },
     { "code": "pw26",  "tab": "PW26", "collectorRange": [10, 13] },
-    { 
+    {
       "code": "pmei", 
       "tab": "PMEI", 
       "collectorList": ["2026-4", "2026-6", "2026-13", "2026-14", "2026-15", "2026-16"]
+    }
+  ],
+  "wizardsArtCards": [
+    {
+      "url": "https://magic.wizards.com/en/products/the-hobbit/card-image-gallery?cigquery=Art%20Card",
+      "tab": "HOB Art Cards",
+      "code": "HOB-ART",
+      "includeSceneCards": true
     }
   ]
 }

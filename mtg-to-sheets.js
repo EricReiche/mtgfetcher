@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 /**
  * mtg-to-sheets.js
- * Downloads Scryfall card CSVs (with pagination) and writes them to Google Sheets.
+ * Downloads Scryfall card JSON (with pagination) and writes it to Google Sheets.
  * One tab per set code. Adds a checkbox column and an image formula column.
  *
  * ── SETUP ──────────────────────────────────────────────────────────────────
- *   npm install googleapis csv-parse
+ *   npm install googleapis
  *
  *   Google Cloud Console  →  https://console.cloud.google.com
  *   a. Create a project → APIs & Services → Enable "Google Sheets API"
@@ -45,7 +45,7 @@
  */
 
 const { google } = require('googleapis');
-const { parse }  = require('csv-parse/sync');
+
 const https      = require('https');
 const fs         = require('fs');
 const path       = require('path');
@@ -61,6 +61,7 @@ const DEFAULTS = {
   imageCol:        null,               // null = auto-detect
   preserveChecks:  true,              // keep checkboxes on re-run by default
   formulaSep:      ';',               // formula argument separator — ';' for German/EU, ',' for US locale
+  wizardsArtCards: [],                // optional official Wizards art-card gallery imports
   sets: [
     { code: 'msh',  tab: 'MSH'  },
     { code: 'tmsh', tab: 'TMSH' },
@@ -156,6 +157,7 @@ function loadConfig() {
     sets:            cli.sets             ?? fileConf.sets             ?? DEFAULTS.sets,
     preserveChecks:  cli.preserveChecks   ?? fileConf.preserveChecks   ?? DEFAULTS.preserveChecks,
     formulaSep:      cli.formulaSep       ?? fileConf.formulaSep       ?? DEFAULTS.formulaSep,
+    wizardsArtCards: fileConf.wizardsArtCards ?? DEFAULTS.wizardsArtCards,
   };
 
   if (!cfg.spreadsheetId) {
@@ -226,6 +228,45 @@ async function authorize(credentialsPath, tokenPath) {
 
 // ── SCRYFALL FETCH ────────────────────────────────────────────────────────────
 
+// These are the columns returned by Scryfall's CSV export. Retaining them keeps
+// existing sheets and dashboard formulas stable while JSON avoids the CSV/JSON
+// mismatch in Scryfall's pagination links.
+const SCRYFALL_HEADERS = [
+  'multiverse_id', 'mtgo_id', 'set', 'collector_number', 'lang', 'rarity',
+  'name', 'mana_cost', 'cmc', 'type_line', 'artist', 'usd_price',
+  'usd_foil_price', 'eur_price', 'tix_price', 'image_uri', 'scryfall_uri',
+  'scryfall_id',
+];
+
+function stringValue(value) {
+  return value === undefined || value === null ? '' : String(value);
+}
+
+function scryfallCardToRow(card) {
+  const frontFace = card.card_faces?.[0];
+  const imageUri = card.image_uris?.normal ?? frontFace?.image_uris?.normal ?? '';
+  return {
+    multiverse_id:   stringValue(card.multiverse_ids?.[0]),
+    mtgo_id:         stringValue(card.mtgo_id),
+    set:             stringValue(card.set),
+    collector_number:stringValue(card.collector_number),
+    lang:            stringValue(card.lang),
+    rarity:          stringValue(card.rarity),
+    name:            stringValue(card.name),
+    mana_cost:       stringValue(card.mana_cost),
+    cmc:             stringValue(card.cmc),
+    type_line:       stringValue(card.type_line),
+    artist:          stringValue(card.artist),
+    usd_price:       stringValue(card.prices?.usd),
+    usd_foil_price:  stringValue(card.prices?.usd_foil),
+    eur_price:       stringValue(card.prices?.eur),
+    tix_price:       stringValue(card.prices?.tix),
+    image_uri:       imageUri,
+    scryfall_uri:    stringValue(card.scryfall_uri),
+    scryfall_id:     stringValue(card.id),
+  };
+}
+
 function httpGet(url) {
   return new Promise((resolve, reject) => {
     // Parse URL explicitly so headers are always sent (https.get(string, opts)
@@ -259,8 +300,7 @@ const RETRY_DELAY_MS = 30_000;
 const MAX_RETRIES    = 3;
 
 async function fetchSet(code) {
-  let url = `https://api.scryfall.com/cards/search?q=set:${code}&unique=prints&include_extras=true&format=csv&page=1`;
-  let headers = null;
+  let url = `https://api.scryfall.com/cards/search?q=set:${code}&unique=prints&include_extras=true&format=json&page=1`;
   let allRows = [];
   let page = 1;
 
@@ -287,30 +327,106 @@ async function fetchSet(code) {
       return { headers: [], rows: [] };
     }
 
-    if (status !== 200 || body.trimStart().startsWith('{')) {
-      const detail = body.trimStart().startsWith('{')
-        ? JSON.parse(body).details
-        : `HTTP ${status}`;
+    if (status !== 200) {
+      const detail = body.trimStart().startsWith('{') ? JSON.parse(body).details : `HTTP ${status}`;
       console.log(` no data (${detail})`);
       return { headers: [], rows: [] };
     }
 
-    const records = parse(body, { columns: true, skip_empty_lines: true });
+    const response = JSON.parse(body);
+    const records = response.data ?? [];
     if (records.length === 0) { console.log(' empty'); break; }
-
-    if (!headers) headers = Object.keys(records[0]);
-    allRows.push(...records);
+    allRows.push(...records.map(scryfallCardToRow));
 
     console.log(` ${records.length} cards`);
-    url = hasMore ? nextPage : null;
+    // JSON is requested explicitly, and Scryfall returns JSON next-page links.
+    url = response.has_more ? response.next_page : null;
     page++;
     if (url) await sleep(PAGE_DELAY_MS);
   }
 
-  return { headers: headers ?? [], rows: allRows };
+  return { headers: SCRYFALL_HEADERS, rows: allRows };
 }
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// ── OFFICIAL WIZARDS ART-CARD FETCH ──────────────────────────────────────────
+
+const WIZARDS_ART_HEADERS = [
+  'set', 'collector_number', 'name', 'rarity', 'artist', 'image_uri',
+  'wizards_gallery_url', 'wizards_entry_id',
+];
+
+/** Parse Wizards' server-rendered card list; its bracketed value is a Contentful entry ID. */
+function parseWizardsArtCards(cardListBody, { includeSceneCards = false } = {}) {
+  return cardListBody.split('\n').flatMap(line => {
+    const match = line.match(/^(.*?) (Scene )?Art Card (\d+)\/(\d+) \[([^\]]+)]$/);
+    if (!match) return [];
+    const [, name, scene, number, total, entryId] = match;
+    if (scene && !includeSceneCards) return [];
+    return [{
+      name: `${name} ${scene ?? ''}Art Card ${number}/${total}`,
+      collector_number: `${number}/${total}`,
+      entryId,
+      kind: scene ? 'scene' : 'art',
+    }];
+  });
+}
+
+function extractWizardsCardList(html) {
+  const match = html.match(/cardList:\{body:("(?:\\.|[^"\\])*")/);
+  if (!match) throw new Error('Wizards gallery page did not contain a card list');
+  return JSON.parse(match[1]);
+}
+
+async function getWizardsContentfulToken(galleryHtml) {
+  const scriptMatch = galleryHtml.match(/(\/_nuxt\/115[^"']+\.js)/);
+  if (!scriptMatch) throw new Error('Wizards gallery page did not expose its Contentful client script');
+  const { body, status } = await httpGet(`https://magic.wizards.com${scriptMatch[1]}`);
+  if (status !== 200) throw new Error(`Could not load Wizards Contentful client (HTTP ${status})`);
+  const tokenMatch = body.match(/CTF_ACCESS_TOKEN:\\?"([^"\\]+)|accessToken:\\?"([^"\\]+)/);
+  if (!tokenMatch) throw new Error('Wizards Contentful client did not expose a delivery token');
+  return tokenMatch[1] ?? tokenMatch[2];
+}
+
+async function fetchWizardsArtCards({ url, tab, code = 'WIZARDS-ART', includeSceneCards = false }) {
+  if (!url || !tab) throw new Error('Each wizardsArtCards entry needs both "url" and "tab"');
+  const gallery = await httpGet(url);
+  if (gallery.status !== 200) throw new Error(`Could not load Wizards gallery (HTTP ${gallery.status})`);
+
+  const cards = parseWizardsArtCards(extractWizardsCardList(gallery.body), { includeSceneCards });
+  if (!cards.length) throw new Error('Wizards gallery did not contain any matching Art Cards');
+  const token = await getWizardsContentfulToken(gallery.body);
+  const entries = new Map();
+
+  // The official gallery itself uses this public Contentful delivery endpoint.
+  for (let start = 0; start < cards.length; start += 100) {
+    const ids = cards.slice(start, start + 100).map(card => card.entryId).join(',');
+    const endpoint = new URL('https://cdn.contentful.com/spaces/s5n2t79q9icq/environments/master/entries');
+    endpoint.search = new URLSearchParams({
+      access_token: token, content_type: 'magicCard', 'sys.id[in]': ids, locale: 'en', limit: '100',
+    }).toString();
+    const response = await httpGet(endpoint.toString());
+    if (response.status !== 200) throw new Error(`Could not load Wizards Art Card details (HTTP ${response.status})`);
+    for (const entry of JSON.parse(response.body).items ?? []) entries.set(entry.sys.id, entry.fields);
+  }
+
+  const rows = cards.map(card => {
+    const details = entries.get(card.entryId);
+    if (!details?.face) throw new Error(`Wizards Art Card ${card.collector_number} did not include an image`);
+    return {
+      set: code,
+      collector_number: card.collector_number,
+      name: details.name ?? card.name,
+      rarity: details.rarity ?? 'Art Card',
+      artist: details.artist ?? '',
+      image_uri: details.face,
+      wizards_gallery_url: url,
+      wizards_entry_id: card.entryId,
+    };
+  });
+  return { headers: WIZARDS_ART_HEADERS, rows };
+}
 
 // ── SHEETS HELPERS ────────────────────────────────────────────────────────────
 
@@ -765,6 +881,16 @@ async function main() {
     console.log('');
   }
 
+  for (const artConfig of cfg.wizardsArtCards) {
+    console.log(`[${artConfig.tab}] Fetching official Wizards Art Cards…`);
+    const { headers, rows } = await fetchWizardsArtCards(artConfig);
+    console.log(`  ${rows.length} total Art Cards. Writing…`);
+    await writeTab(sheets, cfg.spreadsheetId, artConfig.tab, headers, rows, cfg.imageCol, cfg.preserveChecks);
+    doneSets.push({ code: artConfig.code ?? 'WIZARDS-ART', tab: artConfig.tab });
+    if (!sharedHeaders) sharedHeaders = headers;
+    console.log('');
+  }
+
   if (doneSets.length > 0 && sharedHeaders) {
     await createDashboard(sheets, cfg.spreadsheetId, doneSets, sharedHeaders, cfg.formulaSep);
   }
@@ -776,4 +902,7 @@ if (require.main === module) {
   main().catch(err => { console.error(err.message ?? err); process.exit(1); });
 }
 
-module.exports = { authorize, isInvalidGrantError };
+module.exports = {
+  authorize, isInvalidGrantError, scryfallCardToRow, parseWizardsArtCards,
+  fetchSet, fetchWizardsArtCards,
+};

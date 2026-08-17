@@ -22,7 +22,7 @@ Downloads Magic: The Gathering card data from [Scryfall](https://scryfall.com) a
 ### 1. Install dependencies
 
 ```bash
-npm install googleapis csv-parse
+npm install googleapis
 ```
 
 ### 2. Get Google API credentials
@@ -95,6 +95,14 @@ Place this file next to the script. All fields are optional except `spreadsheetI
     { "code": "tmsc", "tab": "TMSC" },
     { "code": "fmsc", "tab": "FMSC" },
     { "code": "spg",  "tab": "SPG", "collectorRange": [103, 110] }
+  ],
+  "wizardsArtCards": [
+    {
+      "url": "https://magic.wizards.com/en/products/the-hobbit/card-image-gallery?cigquery=Art%20Card",
+      "tab": "HOB Art Cards",
+      "code": "HOB-ART",
+      "includeSceneCards": true
+    }
   ]
 }
 ```
@@ -108,7 +116,8 @@ Place this file next to the script. All fields are optional except `spreadsheetI
 | `sets` | Marvel Super Heroes sets | Array of set entries (see below) |
 | `preserveChecks` | `true` | Keep existing checkboxes when re-running |
 | `formulaSep` | `;` | Formula argument separator — `;` for German/EU locale, `,` for US |
-| `imageCol` | auto-detect | Scryfall CSV column name containing the card image URL |
+| `imageCol` | auto-detect | Scryfall data column containing the card image URL |
+| `wizardsArtCards` | `[]` | Optional official Wizards gallery imports (see below) |
 
 ### Set entries
 
@@ -138,6 +147,24 @@ https://scryfall.com/card/pmei/2026-16/captain-america-living-legend
                                code  collector number
 ```
 
+### Wizards Art Card entries
+
+`wizardsArtCards` imports the standalone Art Cards that Scryfall and MTGJSON do
+not model as game-card printings. The importer reads the official Wizards Card
+Image Gallery and its public image data; no API key is required.
+
+| Field | Required | Description |
+|---|---|---|
+| `url` | ✓ | Official Wizards Card Image Gallery URL |
+| `tab` | ✓ | Target sheet-tab name |
+| `code` | — | Stable source code used to preserve checkboxes; default: `WIZARDS-ART` |
+| `includeSceneCards` | — | Include Scene Art Cards in the same tab; default: `false` |
+
+For The Hobbit, `includeSceneCards: false` imports the 54 regular Art Cards.
+Set it to `true` to include the 12 Scene Art Cards as well (66 rows total).
+The row uses `1/54` or `1/12` as its collector number, so re-runs preserve
+checkboxes independently from normal HOB card printings.
+
 ---
 
 ## CLI flags
@@ -151,7 +178,7 @@ All config values can be overridden on the command line. CLI flags take priority
                                  msh:MSH,tmsh:Tokens
 --config <path>            Use a different config file (default: mtg-config.json)
 --credentials <path>       OAuth credentials file (default: credentials.json)
---image-col <name>         Scryfall CSV column for the image URL
+--image-col <name>         Scryfall data column for the image URL
 --preserve-checks          Keep existing checkboxes on re-run
 --formula-sep <char>       Formula argument separator (default: ;)
 -h, --help                 Show help
@@ -197,7 +224,7 @@ If this happens about every seven days, open your Google Cloud project’s **Goo
 |---|---|
 | A | Checkbox — tick when you own the card |
 | B | Card image (`=IMAGE(url)`) |
-| C+ | All Scryfall CSV columns: name, set, collector_number, rarity, prices (usd, eur, tix), artist, etc. |
+| C+ | Scryfall card data: name, set, collector_number, rarity, prices (usd, eur, tix), artist, etc. |
 
 - Rows are sorted by collector number
 - Price columns are formatted as numbers (locale-safe)
