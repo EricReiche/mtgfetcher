@@ -162,6 +162,32 @@ Image Gallery and its public image data; no API key is required.
 
 For The Hobbit, `includeSceneCards: false` imports the 54 regular Art Cards.
 Set it to `true` to include the 12 Scene Art Cards as well (66 rows total).
+
+#### Optional Cardmarket EUR prices
+
+Add a `cardmarket` object to a Wizards entry to fill `eur_price` from Cardmarket's public EUR price guide. This is the Cardmarket-wide EUR guide, not a Germany-only price: the downloadable guide has no country filter. No Cardmarket account or API credentials are required.
+
+```json
+"cardmarket": {
+  "expansionId": 6664,
+  "priceField": "trend",
+  "productIds": {
+    "27/54": 901174,
+    "45/54": 901221
+  }
+}
+```
+
+| Field | Required | Description |
+|---|---|---|
+| `expansionId` | ✓ | Cardmarket expansion ID; The Hobbit: Extras is `6664` |
+| `priceField` | — | One of `trend` (default), `avg`, `low`, `avg1`, `avg7`, or `avg30` |
+| `productIds` | — | Map of collector number to an explicit Cardmarket product ID for naming/variant exceptions |
+| `productCatalogueUrl` | — | Override the default public Magic Singles catalogue endpoint |
+| `priceGuideUrl` | — | Override the default public Magic price-guide endpoint |
+
+The default matching chooses the lowest product ID among matching Art Series variants (the base variant). Use `productIds` where Cardmarket uses a different title or where you prefer a specific variant. A missing `trend` is left blank rather than replaced with a low asking price.
+
 The row uses `1/54` or `1/12` as its collector number, so re-runs preserve
 checkboxes independently from normal HOB card printings. Wizards rows use the
 same Scryfall-derived header order as every normal set tab; source-specific

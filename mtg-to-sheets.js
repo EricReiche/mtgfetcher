@@ -357,6 +357,12 @@ function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 // changing the sheet layout or breaking checkbox preservation.
 const WIZARDS_ART_HEADERS = SCRYFALL_HEADERS;
 
+const CARDMARKET_PRODUCT_CATALOGUE_URL =
+  'https://downloads.s3.cardmarket.com/productCatalog/productList/products_singles_1.json';
+const CARDMARKET_PRICE_GUIDE_URL =
+  'https://downloads.s3.cardmarket.com/productCatalog/priceGuide/price_guide_1.json';
+const CARDMARKET_PRICE_FIELDS = new Set(['avg', 'low', 'trend', 'avg1', 'avg7', 'avg30']);
+
 /** Parse Wizards' server-rendered card list; its bracketed value is a Contentful entry ID. */
 function parseWizardsArtCards(cardListBody, { includeSceneCards = false } = {}) {
   return cardListBody.split('\n').flatMap(line => {
@@ -407,6 +413,81 @@ function extractWizardsContentfulToken(bundle) {
   return match?.[1] ?? null;
 }
 
+function normalizeCardmarketArtName(name) {
+  return String(name)
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/^Art Series:\s*/i, '')
+    .replace(/\s+(?:Scene\s+)?Art Card \d+\/\d+$/i, '')
+    .replace(/\s+Scene$/i, '')
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .trim()
+    .toLowerCase();
+}
+
+function enrichWizardsArtCardPrices(rows, products, priceGuides, {
+  expansionId,
+  priceField = 'trend',
+  productIds = {},
+} = {}) {
+  if (!Number.isInteger(expansionId))
+    throw new Error('Cardmarket pricing requires an integer "expansionId"');
+  if (!CARDMARKET_PRICE_FIELDS.has(priceField))
+    throw new Error(`Unsupported Cardmarket priceField "${priceField}"`);
+
+  const productsById = new Map(products.map(product => [product.idProduct, product]));
+  const guidesById = new Map(priceGuides.map(guide => [guide.idProduct, guide]));
+  const productIdsByName = new Map();
+
+  for (const product of products) {
+    if (product.idExpansion !== expansionId || !product.name.startsWith('Art Series:')) continue;
+    const normalizedName = normalizeCardmarketArtName(product.name);
+    productIdsByName.set(normalizedName, [...(productIdsByName.get(normalizedName) ?? []), product.idProduct]);
+  }
+
+  const stats = { priced: 0, unavailable: 0, unmatched: 0, overridden: 0 };
+  const enriched = rows.map(row => {
+    const overrideId = productIds[String(row.collector_number)];
+    const candidateIds = productIdsByName.get(normalizeCardmarketArtName(row.name)) ?? [];
+    const productId = overrideId ?? candidateIds.sort((a, b) => a - b)[0];
+
+    if (overrideId !== undefined) {
+      const product = productsById.get(overrideId);
+      if (!product || product.idExpansion !== expansionId)
+        throw new Error(`Cardmarket override ${overrideId} for #${row.collector_number} is not in expansion ${expansionId}`);
+      stats.overridden++;
+    }
+    if (!productId) {
+      stats.unmatched++;
+      return row;
+    }
+
+    const price = guidesById.get(productId)?.[priceField];
+    if (typeof price !== 'number' || !Number.isFinite(price)) {
+      stats.unavailable++;
+      return row;
+    }
+    stats.priced++;
+    return { ...row, eur_price: String(price) };
+  });
+
+  return { rows: enriched, stats };
+}
+
+async function fetchCardmarketArtPrices(config) {
+  const [catalogue, guide] = await Promise.all([
+    httpGet(config.productCatalogueUrl ?? CARDMARKET_PRODUCT_CATALOGUE_URL),
+    httpGet(config.priceGuideUrl ?? CARDMARKET_PRICE_GUIDE_URL),
+  ]);
+  if (catalogue.status !== 200) throw new Error(`Could not load Cardmarket product catalogue (HTTP ${catalogue.status})`);
+  if (guide.status !== 200) throw new Error(`Could not load Cardmarket price guide (HTTP ${guide.status})`);
+
+  const products = JSON.parse(catalogue.body).products;
+  const priceGuides = JSON.parse(guide.body).priceGuides;
+  if (!Array.isArray(products) || !Array.isArray(priceGuides))
+    throw new Error('Cardmarket downloads did not contain products and priceGuides arrays');
+  return { products, priceGuides };
+}
+
 async function getWizardsContentfulToken(galleryHtml) {
   // Nuxt chunk names are content-hashed and change on every Wizards deployment.
   // Search every page-referenced Nuxt bundle instead of pinning a chunk number.
@@ -424,7 +505,9 @@ async function getWizardsContentfulToken(galleryHtml) {
   throw new Error('Wizards gallery page did not expose a Contentful delivery token in its Nuxt bundles');
 }
 
-async function fetchWizardsArtCards({ url, tab, code = 'WIZARDS-ART', includeSceneCards = false }) {
+async function fetchWizardsArtCards({
+  url, tab, code = 'WIZARDS-ART', includeSceneCards = false, cardmarket = null,
+}) {
   if (!url || !tab) throw new Error('Each wizardsArtCards entry needs both "url" and "tab"');
   const gallery = await httpGet(url);
   if (gallery.status !== 200) throw new Error(`Could not load Wizards gallery (HTTP ${gallery.status})`);
@@ -446,7 +529,7 @@ async function fetchWizardsArtCards({ url, tab, code = 'WIZARDS-ART', includeSce
     for (const entry of JSON.parse(response.body).items ?? []) entries.set(entry.sys.id, entry.fields);
   }
 
-  const rows = cards.map(card => {
+  let rows = cards.map(card => {
     const details = entries.get(card.entryId);
     if (!details?.face) throw new Error(`Wizards Art Card ${card.collector_number} did not include an image`);
     return wizardsCardToRow({
@@ -454,6 +537,16 @@ async function fetchWizardsArtCards({ url, tab, code = 'WIZARDS-ART', includeSce
       fallbackName: card.name, details,
     });
   });
+
+  if (cardmarket) {
+    console.log('  Fetching Cardmarket EUR price guide…');
+    const { products, priceGuides } = await fetchCardmarketArtPrices(cardmarket);
+    const enriched = enrichWizardsArtCardPrices(rows, products, priceGuides, cardmarket);
+    rows = enriched.rows;
+    const { priced, unavailable, unmatched, overridden } = enriched.stats;
+    console.log(`  Cardmarket: ${priced} EUR prices, ${unavailable} unavailable, ${unmatched} unmatched, ${overridden} override(s)`);
+  }
+
   return { headers: WIZARDS_ART_HEADERS, rows };
 }
 
@@ -946,5 +1039,5 @@ if (require.main === module) {
 module.exports = {
   authorize, isInvalidGrantError, scryfallCardToRow, parseWizardsArtCards,
   wizardsCardToRow, quoteSheetTab, extractWizardsContentfulToken, checkboxKey,
-  fetchSet, fetchWizardsArtCards,
+  enrichWizardsArtCardPrices, fetchSet, fetchWizardsArtCards,
 };

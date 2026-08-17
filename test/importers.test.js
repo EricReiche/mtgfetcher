@@ -8,6 +8,7 @@ const {
   wizardsCardToRow,
   extractWizardsContentfulToken,
   checkboxKey,
+  enrichWizardsArtCardPrices,
 } = require('../mtg-to-sheets.js');
 
 test('converts a Scryfall JSON card to the legacy sheet columns', () => {
@@ -85,4 +86,46 @@ test('uses case-independent checkbox keys across CSV and JSON Scryfall set codes
   assert.equal(checkboxKey('HOB', '60'), 'hob:60');
   assert.equal(checkboxKey('hob', 60), 'hob:60');
   assert.equal(checkboxKey(' HOB ', ' 60 '), 'hob:60');
+});
+
+test('fills Art Card EUR price from the Cardmarket trend guide using the base variant', () => {
+  const rows = [{ name: 'Art Series: Troop of Ponies Art Card 1/54', collector_number: '1/54', eur_price: '' }];
+  const products = [
+    { idProduct: 901097, idExpansion: 6664, name: 'Art Series: Troop of Ponies' },
+    { idProduct: 901098, idExpansion: 6664, name: 'Art Series: Troop of Ponies' },
+  ];
+  const guides = [
+    { idProduct: 901097, trend: 2.5 },
+    { idProduct: 901098, trend: 9.5 },
+  ];
+
+  const { rows: enriched, stats } = enrichWizardsArtCardPrices(rows, products, guides, { expansionId: 6664 });
+  assert.equal(enriched[0].eur_price, '2.5');
+  assert.deepEqual(stats, { priced: 1, unavailable: 0, unmatched: 0, overridden: 0 });
+});
+
+test('uses an explicit Cardmarket product override and leaves unavailable guide values blank', () => {
+  const rows = [{ name: 'Art Series: Plains Art Card 41/54', collector_number: '41/54', eur_price: '' }];
+  const products = [
+    { idProduct: 901212, idExpansion: 6664, name: 'Art Series: Plains' },
+    { idProduct: 901213, idExpansion: 6664, name: 'Art Series: Plains' },
+  ];
+  const guides = [{ idProduct: 901213, trend: null }];
+
+  const { rows: enriched, stats } = enrichWizardsArtCardPrices(rows, products, guides, {
+    expansionId: 6664,
+    productIds: { '41/54': 901213 },
+  });
+  assert.equal(enriched[0].eur_price, '');
+  assert.deepEqual(stats, { priced: 0, unavailable: 1, unmatched: 0, overridden: 1 });
+});
+
+test('matches a Cardmarket Scene product name to a Wizards Scene Art Card', () => {
+  const rows = [{ name: 'Gandalf, Party Guest Scene Art Card 2/12', collector_number: '2/12', eur_price: '' }];
+  const products = [{ idProduct: 901242, idExpansion: 6664, name: 'Art Series: Gandalf, Party Guest Scene' }];
+  const guides = [{ idProduct: 901242, trend: 1.5 }];
+
+  const { rows: enriched, stats } = enrichWizardsArtCardPrices(rows, products, guides, { expansionId: 6664 });
+  assert.equal(enriched[0].eur_price, '1.5');
+  assert.deepEqual(stats, { priced: 1, unavailable: 0, unmatched: 0, overridden: 0 });
 });
