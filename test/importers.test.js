@@ -52,6 +52,17 @@ test('parses standalone Art Cards and can exclude Scene Art Cards from a Wizards
   assert.deepEqual(parseWizardsArtCards(body, { includeSceneCards: true }).map(card => card.kind), ['scene', 'art']);
 });
 
+test('filters a Wizards gallery into an independent Scene Card tab', () => {
+  const body = [
+    'Regular Art Card 1/54 [regular-entry]',
+    'Scene Card Scene Art Card 1/12 [scene-entry]',
+  ].join('\n');
+
+  assert.deepEqual(parseWizardsArtCards(body, { kind: 'scene' }), [{
+    name: 'Scene Card Scene Art Card 1/12', collector_number: '1/12', entryId: 'scene-entry', kind: 'scene',
+  }]);
+});
+
 test('quotes sheet tab names in formulas, including embedded apostrophes', () => {
   assert.equal(quoteSheetTab('HOB Art Cards'), "'HOB Art Cards'");
   assert.equal(quoteSheetTab("Urza's Art"), "'Urza''s Art'");

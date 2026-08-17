@@ -22,7 +22,7 @@
       "url": "https://magic.wizards.com/en/products/the-hobbit/card-image-gallery?cigquery=Art%20Card",
       "tab": "HOB Art Cards",
       "code": "HOB-ART",
-      "includeSceneCards": true,
+      "kind": "art",
       "cardmarket": {
         "expansionId": 6664,
         "priceField": "trend",
@@ -30,6 +30,16 @@
           "27/54": 901174,
           "45/54": 901221
         }
+      }
+    },
+    {
+      "url": "https://magic.wizards.com/en/products/the-hobbit/card-image-gallery?cigquery=Art%20Card",
+      "tab": "HOB Scene Cards",
+      "code": "HOB-SCENE",
+      "kind": "scene",
+      "cardmarket": {
+        "expansionId": 6664,
+        "priceField": "trend"
       }
     }
   ]

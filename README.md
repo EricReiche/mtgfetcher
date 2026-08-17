@@ -158,10 +158,35 @@ Image Gallery and its public image data; no API key is required.
 | `url` | ✓ | Official Wizards Card Image Gallery URL |
 | `tab` | ✓ | Target sheet-tab name |
 | `code` | — | Stable source code used to preserve checkboxes; default: `WIZARDS-ART` |
-| `includeSceneCards` | — | Include Scene Art Cards in the same tab; default: `false` |
+| `kind` | — | `art` for regular Art Cards only, or `scene` for Scene Art Cards only |
+| `includeSceneCards` | — | Legacy combined-tab option; includes both types when `kind` is omitted |
 
-For The Hobbit, `includeSceneCards: false` imports the 54 regular Art Cards.
-Set it to `true` to include the 12 Scene Art Cards as well (66 rows total).
+To split The Hobbit cards into independent tabs, create **two entries** using
+the same Gallery URL. Use distinct codes: both groups have card numbers such
+as `1/54` and `1/12`, and distinct codes guarantee independent checkbox keys.
+
+```json
+"wizardsArtCards": [
+  {
+    "url": "https://magic.wizards.com/en/products/the-hobbit/card-image-gallery?cigquery=Art%20Card",
+    "tab": "HOB Art Cards",
+    "code": "HOB-ART",
+    "kind": "art",
+    "cardmarket": { "expansionId": 6664, "priceField": "trend" }
+  },
+  {
+    "url": "https://magic.wizards.com/en/products/the-hobbit/card-image-gallery?cigquery=Art%20Card",
+    "tab": "HOB Scene Cards",
+    "code": "HOB-SCENE",
+    "kind": "scene",
+    "cardmarket": { "expansionId": 6664, "priceField": "trend" }
+  }
+]
+```
+
+This produces 54 regular Art Cards and 12 Scene Art Cards. The legacy
+`includeSceneCards: true` configuration remains supported for a combined
+66-card tab.
 
 #### Optional Cardmarket EUR prices
 

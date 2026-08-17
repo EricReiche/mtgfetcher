@@ -364,17 +364,20 @@ const CARDMARKET_PRICE_GUIDE_URL =
 const CARDMARKET_PRICE_FIELDS = new Set(['avg', 'low', 'trend', 'avg1', 'avg7', 'avg30']);
 
 /** Parse Wizards' server-rendered card list; its bracketed value is a Contentful entry ID. */
-function parseWizardsArtCards(cardListBody, { includeSceneCards = false } = {}) {
+function parseWizardsArtCards(cardListBody, { includeSceneCards = false, kind = null } = {}) {
+  if (kind !== null && kind !== 'art' && kind !== 'scene')
+    throw new Error('Wizards Art Card kind must be "art" or "scene"');
   return cardListBody.split('\n').flatMap(line => {
     const match = line.match(/^(.*?) (Scene )?Art Card (\d+)\/(\d+) \[([^\]]+)]$/);
     if (!match) return [];
     const [, name, scene, number, total, entryId] = match;
-    if (scene && !includeSceneCards) return [];
+    const cardKind = scene ? 'scene' : 'art';
+    if (kind ? cardKind !== kind : scene && !includeSceneCards) return [];
     return [{
       name: `${name} ${scene ?? ''}Art Card ${number}/${total}`,
       collector_number: `${number}/${total}`,
       entryId,
-      kind: scene ? 'scene' : 'art',
+      kind: cardKind,
     }];
   });
 }
@@ -506,13 +509,13 @@ async function getWizardsContentfulToken(galleryHtml) {
 }
 
 async function fetchWizardsArtCards({
-  url, tab, code = 'WIZARDS-ART', includeSceneCards = false, cardmarket = null,
+  url, tab, code = 'WIZARDS-ART', includeSceneCards = false, kind = null, cardmarket = null,
 }) {
   if (!url || !tab) throw new Error('Each wizardsArtCards entry needs both "url" and "tab"');
   const gallery = await httpGet(url);
   if (gallery.status !== 200) throw new Error(`Could not load Wizards gallery (HTTP ${gallery.status})`);
 
-  const cards = parseWizardsArtCards(extractWizardsCardList(gallery.body), { includeSceneCards });
+  const cards = parseWizardsArtCards(extractWizardsCardList(gallery.body), { includeSceneCards, kind });
   if (!cards.length) throw new Error('Wizards gallery did not contain any matching Art Cards');
   const token = await getWizardsContentfulToken(gallery.body);
   const entries = new Map();
