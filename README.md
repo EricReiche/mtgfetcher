@@ -108,24 +108,44 @@ Place this file next to the script. All fields are optional except `spreadsheetI
 
 ```json
 {
-  "spreadsheetId": "1BxiMxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+  "spreadsheetId": "186xxxxxxxxxxxxxxxxxxxxxxxxxx",
   "credentialsPath": "credentials.json",
-  "formulaSep": ";",
+  "imageCol": null,
   "sets": [
-    { "code": "msh",  "tab": "MSH"  },
-    { "code": "tmsh", "tab": "TMSH" },
-    { "code": "amsh", "tab": "AMSH" },
-    { "code": "msc",  "tab": "MSC"  },
-    { "code": "tmsc", "tab": "TMSC" },
-    { "code": "fmsc", "tab": "FMSC" },
-    { "code": "spg",  "tab": "SPG", "collectorRange": [103, 110] }
+    { "code": "hob", "tab": "HOB" },
+    { "code": "thob", "tab": "THOB" },
+    { "code": "hoc", "tab": "HOC" },
+    { "code": "pw26", "tab": "PW26", "collectorRange": [14, 16] }
   ],
+  "sceneImageGallery": {
+    "sourceTab": "HOB Scene Cards",
+    "tab": "HOB Scenes",
+    "columns": 3
+  },
   "wizardsArtCards": [
     {
       "url": "https://magic.wizards.com/en/products/the-hobbit/card-image-gallery?cigquery=Art%20Card",
       "tab": "HOB Art Cards",
       "code": "HOB-ART",
-      "includeSceneCards": true
+      "kind": "art",
+      "cardmarket": {
+        "expansionId": 6664,
+        "priceField": "trend",
+        "productIds": {
+          "27/54": 901174,
+          "45/54": 901221
+        }
+      }
+    },
+    {
+      "url": "https://magic.wizards.com/en/products/the-hobbit/card-image-gallery?cigquery=Art%20Card",
+      "tab": "HOB Scene Cards",
+      "code": "HOB-SCENE",
+      "kind": "scene",
+      "cardmarket": {
+        "expansionId": 6664,
+        "priceField": "trend"
+      }
     }
   ]
 }
