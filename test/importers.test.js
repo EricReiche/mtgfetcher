@@ -9,6 +9,7 @@ const {
   extractWizardsContentfulToken,
   checkboxKey,
   enrichWizardsArtCardPrices,
+  buildImageGalleryFormulas,
 } = require('../mtg-to-sheets.js');
 
 test('converts a Scryfall JSON card to the legacy sheet columns', () => {
@@ -139,4 +140,14 @@ test('matches a Cardmarket Scene product name to a Wizards Scene Art Card', () =
   const { rows: enriched, stats } = enrichWizardsArtCardPrices(rows, products, guides, { expansionId: 6664 });
   assert.equal(enriched[0].eur_price, '1.5');
   assert.deepEqual(stats, { priced: 1, unavailable: 0, unmatched: 0, overridden: 0 });
+});
+
+test('lays out source image formulas three per row with safely quoted tabs', () => {
+  assert.deepEqual(
+    buildImageGalleryFormulas('HOB Scene Cards', 'R', 5, 3),
+    [
+      ["=IMAGE('HOB Scene Cards'!R2)", "=IMAGE('HOB Scene Cards'!R3)", "=IMAGE('HOB Scene Cards'!R4)"],
+      ["=IMAGE('HOB Scene Cards'!R5)", "=IMAGE('HOB Scene Cards'!R6)", ''],
+    ],
+  );
 });

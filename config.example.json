@@ -42,5 +42,10 @@
         "priceField": "trend"
       }
     }
-  ]
+  ],
+  "sceneImageGallery": {
+    "sourceTab": "HOB Scene Cards",
+    "tab": "HOB Scenes",
+    "columns": 3
+  }
 }

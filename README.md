@@ -188,6 +188,24 @@ This produces 54 regular Art Cards and 12 Scene Art Cards. The legacy
 `includeSceneCards: true` configuration remains supported for a combined
 66-card tab.
 
+#### Optional Scene image gallery
+
+`sceneImageGallery` creates an image-only gallery tab from a tab imported in
+the same run. The gallery contains formulas pointing at the canonical image URL
+column, so it refreshes with the source import and does not duplicate URLs.
+
+```json
+"sceneImageGallery": {
+  "sourceTab": "HOB Scene Cards",
+  "tab": "HOB Scenes",
+  "columns": 3
+}
+```
+
+The default is three images per row. It uses 250-pixel columns and 350-pixel
+rows, hides gridlines, and does not participate in checkbox tracking or the
+Dashboard. `columnWidth` and `rowHeight` are optional pixel-size overrides.
+
 #### Optional Cardmarket EUR prices
 
 Add a `cardmarket` object to a Wizards entry to fill `eur_price` from Cardmarket's public EUR price guide. This is the Cardmarket-wide EUR guide, not a Germany-only price: the downloadable guide has no country filter. No Cardmarket account or API credentials are required.

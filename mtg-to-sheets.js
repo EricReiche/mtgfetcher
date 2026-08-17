@@ -566,6 +566,18 @@ function quoteSheetTab(tabName) {
   return `'${String(tabName).replaceAll("'", "''")}'`;
 }
 
+function buildImageGalleryFormulas(sourceTab, imageColumn, imageCount, columns = 3) {
+  if (!Number.isInteger(imageCount) || imageCount < 0) throw new Error('Image gallery imageCount must be a non-negative integer');
+  if (!Number.isInteger(columns) || columns < 1) throw new Error('Image gallery columns must be a positive integer');
+  const rows = [];
+  for (let index = 0; index < imageCount; index++) {
+    const rowIndex = Math.floor(index / columns);
+    if (!rows[rowIndex]) rows[rowIndex] = Array(columns).fill('');
+    rows[rowIndex][index % columns] = `=IMAGE(${quoteSheetTab(sourceTab)}!${imageColumn}${index + 2})`;
+  }
+  return rows;
+}
+
 function findImageColIdx(headers, imageColOverride) {
   if (imageColOverride) {
     const i = headers.indexOf(imageColOverride);
@@ -801,6 +813,60 @@ async function writeTab(sheets, spreadsheetId, tabName, csvHeaders, rows, imageC
   console.log(`  ✓ ${numRows} cards → tab "${tabName}"${imgNote}`);
 }
 
+// ── IMAGE GALLERY TAB ─────────────────────────────────────────────────────────
+
+async function createImageGallery(sheets, spreadsheetId, {
+  sourceTab, tab, columns = 3, columnWidth = 250, rowHeight = 350,
+}, sourceHeaders, sourceRowCount) {
+  if (!sourceTab || !tab) throw new Error('sceneImageGallery needs both "sourceTab" and "tab"');
+  const imageIndex = findImageColIdx(sourceHeaders, null);
+  if (imageIndex < 0) throw new Error(`Could not find an image URL column for gallery source "${sourceTab}"`);
+  const imageColumn = colLetter(2 + imageIndex); // source tabs prepend Collected + Image
+  const formulas = buildImageGalleryFormulas(sourceTab, imageColumn, sourceRowCount, columns);
+
+  const meta = await sheets.spreadsheets.get({ spreadsheetId });
+  const existing = meta.data.sheets.find(sheet => sheet.properties.title === tab);
+  let sheetId;
+  if (existing) {
+    sheetId = existing.properties.sheetId;
+    await sheets.spreadsheets.values.clear({ spreadsheetId, range: quoteSheetTab(tab) });
+  } else {
+    const res = await sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: { requests: [{ addSheet: { properties: { title: tab } } }] },
+    });
+    sheetId = res.data.replies[0].addSheet.properties.sheetId;
+  }
+
+  if (formulas.length) {
+    await sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `${quoteSheetTab(tab)}!A1`,
+      valueInputOption: 'USER_ENTERED',
+      requestBody: { values: formulas },
+    });
+  }
+
+  const requests = [
+    { updateSheetProperties: {
+      properties: { sheetId, gridProperties: { hideGridlines: true } },
+      fields: 'gridProperties.hideGridlines',
+    }},
+    { updateDimensionProperties: {
+      range: { sheetId, dimension: 'ROWS', startIndex: 0, endIndex: formulas.length },
+      properties: { pixelSize: rowHeight }, fields: 'pixelSize',
+    }},
+  ];
+  for (let index = 0; index < columns; index++) {
+    requests.push({ updateDimensionProperties: {
+      range: { sheetId, dimension: 'COLUMNS', startIndex: index, endIndex: index + 1 },
+      properties: { pixelSize: columnWidth }, fields: 'pixelSize',
+    }});
+  }
+  await sheets.spreadsheets.batchUpdate({ spreadsheetId, requestBody: { requests } });
+  console.log(`  ✓ ${sourceRowCount} images → gallery "${tab}" (${columns} per row)`);
+}
+
 // ── DASHBOARD ─────────────────────────────────────────────────────────────────
 //
 // Layout (2 columns per set, side by side):
@@ -972,6 +1038,7 @@ async function main() {
   const sheets = google.sheets({ version: 'v4', auth });
 
   const doneSets    = [];   // sets successfully written
+  const tabImports  = new Map(); // tab → current headers/row count for optional galleries
   let   sharedHeaders = null; // CSV headers (same for all Scryfall tabs)
 
   for (const { code, tab, collectorRange, collectorList } of cfg.sets) {
@@ -1014,6 +1081,7 @@ async function main() {
     console.log(`  ${rows.length} total cards. Writing…`);
     await writeTab(sheets, cfg.spreadsheetId, tab, headers, rows, cfg.imageCol, cfg.preserveChecks);
     doneSets.push({ code, tab });
+    tabImports.set(tab, { headers, rowCount: rows.length });
     if (!sharedHeaders) sharedHeaders = headers;
     console.log('');
   }
@@ -1024,7 +1092,17 @@ async function main() {
     console.log(`  ${rows.length} total Art Cards. Writing…`);
     await writeTab(sheets, cfg.spreadsheetId, artConfig.tab, headers, rows, cfg.imageCol, cfg.preserveChecks);
     doneSets.push({ code: artConfig.code ?? 'WIZARDS-ART', tab: artConfig.tab });
+    tabImports.set(artConfig.tab, { headers, rowCount: rows.length });
     if (!sharedHeaders) sharedHeaders = headers;
+    console.log('');
+  }
+
+  if (cfg.sceneImageGallery) {
+    const { sourceTab } = cfg.sceneImageGallery;
+    const source = tabImports.get(sourceTab);
+    if (!source) throw new Error(`sceneImageGallery sourceTab "${sourceTab}" was not imported in this run`);
+    console.log(`[${cfg.sceneImageGallery.tab}] Building image gallery from "${sourceTab}"…`);
+    await createImageGallery(sheets, cfg.spreadsheetId, cfg.sceneImageGallery, source.headers, source.rowCount);
     console.log('');
   }
 
@@ -1041,6 +1119,6 @@ if (require.main === module) {
 
 module.exports = {
   authorize, isInvalidGrantError, scryfallCardToRow, parseWizardsArtCards,
-  wizardsCardToRow, quoteSheetTab, extractWizardsContentfulToken, checkboxKey,
+  wizardsCardToRow, quoteSheetTab, buildImageGalleryFormulas, extractWizardsContentfulToken, checkboxKey,
   enrichWizardsArtCardPrices, fetchSet, fetchWizardsArtCards,
 };
