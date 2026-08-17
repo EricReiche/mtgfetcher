@@ -402,14 +402,26 @@ function extractWizardsCardList(html) {
   return JSON.parse(match[1]);
 }
 
+function extractWizardsContentfulToken(bundle) {
+  const match = bundle.match(/(?:CTF_ACCESS_TOKEN|accessToken):\\?"([^"\\]+)/);
+  return match?.[1] ?? null;
+}
+
 async function getWizardsContentfulToken(galleryHtml) {
-  const scriptMatch = galleryHtml.match(/(\/_nuxt\/115[^"']+\.js)/);
-  if (!scriptMatch) throw new Error('Wizards gallery page did not expose its Contentful client script');
-  const { body, status } = await httpGet(`https://magic.wizards.com${scriptMatch[1]}`);
-  if (status !== 200) throw new Error(`Could not load Wizards Contentful client (HTTP ${status})`);
-  const tokenMatch = body.match(/CTF_ACCESS_TOKEN:\\?"([^"\\]+)|accessToken:\\?"([^"\\]+)/);
-  if (!tokenMatch) throw new Error('Wizards Contentful client did not expose a delivery token');
-  return tokenMatch[1] ?? tokenMatch[2];
+  // Nuxt chunk names are content-hashed and change on every Wizards deployment.
+  // Search every page-referenced Nuxt bundle instead of pinning a chunk number.
+  const scriptUrls = [...galleryHtml.matchAll(/<script\b[^>]*\bsrc=["']([^"']+)["']/g)]
+    .map(match => match[1])
+    .filter(src => src.startsWith('/_nuxt/'));
+
+  for (const scriptUrl of scriptUrls) {
+    const { body, status } = await httpGet(new URL(scriptUrl, 'https://magic.wizards.com').toString());
+    if (status !== 200) continue;
+    const token = extractWizardsContentfulToken(body);
+    if (token) return token;
+  }
+
+  throw new Error('Wizards gallery page did not expose a Contentful delivery token in its Nuxt bundles');
 }
 
 async function fetchWizardsArtCards({ url, tab, code = 'WIZARDS-ART', includeSceneCards = false }) {
@@ -926,5 +938,6 @@ if (require.main === module) {
 
 module.exports = {
   authorize, isInvalidGrantError, scryfallCardToRow, parseWizardsArtCards,
-  wizardsCardToRow, quoteSheetTab, fetchSet, fetchWizardsArtCards,
+  wizardsCardToRow, quoteSheetTab, extractWizardsContentfulToken,
+  fetchSet, fetchWizardsArtCards,
 };

@@ -6,6 +6,7 @@ const {
   parseWizardsArtCards,
   quoteSheetTab,
   wizardsCardToRow,
+  extractWizardsContentfulToken,
 } = require('../mtg-to-sheets.js');
 
 test('converts a Scryfall JSON card to the legacy sheet columns', () => {
@@ -71,4 +72,10 @@ test('maps an official Wizards Art Card to the same columns as a Scryfall card',
   assert.equal(row.collector_number, '6/54');
   assert.equal(row.image_uri, 'https://media.wizards.example/art.webp');
   assert.equal(row.scryfall_id, 'wizards:entry-id');
+});
+
+test('extracts a Contentful token from either current Wizards bundle spelling', () => {
+  assert.equal(extractWizardsContentfulToken('CTF_ACCESS_TOKEN:\\"token-one"'), 'token-one');
+  assert.equal(extractWizardsContentfulToken('accessToken:"token-two"'), 'token-two');
+  assert.equal(extractWizardsContentfulToken('unrelated bundle'), null);
 });

@@ -163,7 +163,11 @@ Image Gallery and its public image data; no API key is required.
 For The Hobbit, `includeSceneCards: false` imports the 54 regular Art Cards.
 Set it to `true` to include the 12 Scene Art Cards as well (66 rows total).
 The row uses `1/54` or `1/12` as its collector number, so re-runs preserve
-checkboxes independently from normal HOB card printings.
+checkboxes independently from normal HOB card printings. Wizards rows use the
+same Scryfall-derived header order as every normal set tab; source-specific
+fields that Wizards does not publish are left blank. That makes a future
+Scryfall Art Card import a drop-in source replacement without changing the
+sheet layout.
 
 ---
 
