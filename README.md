@@ -34,6 +34,11 @@ npm install googleapis
    - Application type: **Desktop app**
 5. Download the JSON file and save it as **`credentials.json`** next to the script
 
+`credentials.json` identifies this local application to Google. It contains the
+OAuth client ID and client secret, but **does not grant the script access to any
+spreadsheet by itself**. Keep it private and out of Git; it is already intended
+to be listed in `.gitignore`.
+
 ### 3. Create a Google Sheet
 
 Create a blank spreadsheet and copy the ID from the URL:
@@ -46,13 +51,32 @@ https://docs.google.com/spreadsheets/d/THIS_PART_IS_THE_ID/edit
 
 Edit **`mtg-config.json`** (see [Configuration](#configuration) below) and paste your spreadsheet ID.
 
-### 5. Run
+### 5. Authorise Google Sheets access
 
 ```bash
 node mtg-to-sheets.js
 ```
 
-On the first run the script will print a Google auth URL. Open it in your browser, approve access, and paste the code back into the terminal. The token is cached in `token.json` for all future runs.
+The first run performs the OAuth authorization flow:
+
+1. The script reads `credentials.json` and prints a Google authorization URL.
+2. Open that URL in a browser, sign in to the Google account that owns or can
+   edit the target spreadsheet, and approve the requested **Google Sheets**
+   permission.
+3. Google displays an authorization code. Copy that code into the terminal when
+   the script prompts for it.
+4. The script exchanges the one-time code for OAuth tokens and writes them to
+   **`token.json`** next to the script.
+
+`token.json` is the file that authorizes future non-interactive runs. It can
+contain a refresh token, so treat it like a password: never commit, upload, or
+share it. Later runs refresh the short-lived access token automatically without
+asking you to approve access again.
+
+If access is revoked, the refresh token expires, or the script reports
+`invalid_grant`, delete `token.json` and run the script again to repeat this
+flow. See [OAuth token expired or revoked (`invalid_grant`)](#oauth-token-expired-or-revoked-invalid_grant)
+for the Google Cloud production-setting note.
 
 ---
 
