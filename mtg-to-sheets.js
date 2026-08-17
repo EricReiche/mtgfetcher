@@ -501,6 +501,13 @@ function coerceValue(v) {
 
 // ── CHECKBOX PRESERVATION ─────────────────────────────────────────────────────
 
+// Scryfall's CSV export uses uppercase set codes (e.g. HOB), while its JSON
+// API uses lowercase (hob). Normalize both sides so a source-format change
+// cannot clear previously collected cards.
+function checkboxKey(setCode, collectorNumber) {
+  return `${String(setCode ?? '').trim().toLowerCase()}:${String(collectorNumber ?? '').trim()}`;
+}
+
 /**
  * Read the existing sheet and return a Map of "set:collector_number" → true/false.
  * Columns are matched by header name, not position, so reordering is safe.
@@ -533,7 +540,7 @@ async function readCheckboxMap(sheets, spreadsheetId, tabName) {
   const map = new Map();
   for (const row of dataRows) {
     const checked = String(row[checkCol] ?? '').toUpperCase() === 'TRUE';
-    const key = `${row[setCol]}:${row[numCol]}`;
+    const key = checkboxKey(row[setCol], row[numCol]);
     if (checked) map.set(key, true);
   }
   return map;
@@ -584,7 +591,7 @@ async function writeTab(sheets, spreadsheetId, tabName, csvHeaders, rows, imageC
   // so formulas evaluate. Everything else goes RAW to bypass locale-dependent
   // number parsing (German "." = thousands sep would corrupt "46.14" → 46140).
   const dataRows = rows.map(row => {
-    const key     = `${row['set']}:${row['collector_number']}`;
+    const key     = checkboxKey(row['set'], row['collector_number']);
     const checked = checkMap.has(key); // JS boolean — RAW mode stores it as Sheets boolean
     return [checked, '', ...csvHeaders.map(h => coerceValue(row[h] ?? ''))];
   });
@@ -938,6 +945,6 @@ if (require.main === module) {
 
 module.exports = {
   authorize, isInvalidGrantError, scryfallCardToRow, parseWizardsArtCards,
-  wizardsCardToRow, quoteSheetTab, extractWizardsContentfulToken,
+  wizardsCardToRow, quoteSheetTab, extractWizardsContentfulToken, checkboxKey,
   fetchSet, fetchWizardsArtCards,
 };

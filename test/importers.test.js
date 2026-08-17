@@ -7,6 +7,7 @@ const {
   quoteSheetTab,
   wizardsCardToRow,
   extractWizardsContentfulToken,
+  checkboxKey,
 } = require('../mtg-to-sheets.js');
 
 test('converts a Scryfall JSON card to the legacy sheet columns', () => {
@@ -78,4 +79,10 @@ test('extracts a Contentful token from either current Wizards bundle spelling', 
   assert.equal(extractWizardsContentfulToken('CTF_ACCESS_TOKEN:\\"token-one"'), 'token-one');
   assert.equal(extractWizardsContentfulToken('accessToken:"token-two"'), 'token-two');
   assert.equal(extractWizardsContentfulToken('unrelated bundle'), null);
+});
+
+test('uses case-independent checkbox keys across CSV and JSON Scryfall set codes', () => {
+  assert.equal(checkboxKey('HOB', '60'), 'hob:60');
+  assert.equal(checkboxKey('hob', 60), 'hob:60');
+  assert.equal(checkboxKey(' HOB ', ' 60 '), 'hob:60');
 });
