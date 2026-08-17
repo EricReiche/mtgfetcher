@@ -133,6 +133,20 @@ Config file format (mtg-config.json):
 // ── CONFIG RESOLUTION ────────────────────────────────────────────────────────
 // Priority: CLI > config file > DEFAULTS
 
+function resolveConfig(cli, fileConf) {
+  return {
+    spreadsheetId:   cli.spreadsheetId   ?? fileConf.spreadsheetId   ?? DEFAULTS.spreadsheetId,
+    credentialsPath: cli.credentialsPath  ?? fileConf.credentialsPath ?? DEFAULTS.credentialsPath,
+    tokenPath:       fileConf.tokenPath   ?? DEFAULTS.tokenPath,
+    imageCol:        cli.imageCol         ?? fileConf.imageCol         ?? DEFAULTS.imageCol,
+    sets:            cli.sets             ?? fileConf.sets             ?? DEFAULTS.sets,
+    preserveChecks:  cli.preserveChecks   ?? fileConf.preserveChecks   ?? DEFAULTS.preserveChecks,
+    formulaSep:      cli.formulaSep       ?? fileConf.formulaSep       ?? DEFAULTS.formulaSep,
+    wizardsArtCards: fileConf.wizardsArtCards ?? DEFAULTS.wizardsArtCards,
+    sceneImageGallery: fileConf.sceneImageGallery ?? null,
+  };
+}
+
 function loadConfig() {
   const cli = parseArgs(process.argv.slice(2));
 
@@ -149,16 +163,7 @@ function loadConfig() {
   }
 
   // Merge: CLI wins over file, file wins over defaults
-  const cfg = {
-    spreadsheetId:   cli.spreadsheetId   ?? fileConf.spreadsheetId   ?? DEFAULTS.spreadsheetId,
-    credentialsPath: cli.credentialsPath  ?? fileConf.credentialsPath ?? DEFAULTS.credentialsPath,
-    tokenPath:       fileConf.tokenPath   ?? DEFAULTS.tokenPath,
-    imageCol:        cli.imageCol         ?? fileConf.imageCol         ?? DEFAULTS.imageCol,
-    sets:            cli.sets             ?? fileConf.sets             ?? DEFAULTS.sets,
-    preserveChecks:  cli.preserveChecks   ?? fileConf.preserveChecks   ?? DEFAULTS.preserveChecks,
-    formulaSep:      cli.formulaSep       ?? fileConf.formulaSep       ?? DEFAULTS.formulaSep,
-    wizardsArtCards: fileConf.wizardsArtCards ?? DEFAULTS.wizardsArtCards,
-  };
+  const cfg = resolveConfig(cli, fileConf);
 
   if (!cfg.spreadsheetId) {
     console.error(
@@ -1118,7 +1123,7 @@ if (require.main === module) {
 }
 
 module.exports = {
-  authorize, isInvalidGrantError, scryfallCardToRow, parseWizardsArtCards,
+  authorize, isInvalidGrantError, resolveConfig, scryfallCardToRow, parseWizardsArtCards,
   wizardsCardToRow, quoteSheetTab, buildImageGalleryFormulas, extractWizardsContentfulToken, checkboxKey,
   enrichWizardsArtCardPrices, fetchSet, fetchWizardsArtCards,
 };
