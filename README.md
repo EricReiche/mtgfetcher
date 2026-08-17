@@ -438,3 +438,29 @@ The Scryfall `/cards/search` endpoint is limited to **2 requests per second**. T
 | `mtg-config.json` | Your configuration |
 | `credentials.json` | Google OAuth client secret (download from Google Cloud Console) |
 | `token.json` | Cached auth token (auto-created on first run) |
+
+---
+
+## License and third-party material
+
+The code and original documentation in this repository are licensed under the
+[PolyForm Noncommercial License 1.0.0](LICENSE). You may use, modify, and
+redistribute them for noncommercial purposes, including personal collection
+tracking and hobby projects. Commercial use—including operating this software
+as a paid or otherwise commercial hosted service—requires separate written
+permission from the copyright holder. This is source-available software, not
+an OSI-approved open-source license.
+
+See [NOTICE](NOTICE) for the required copyright notice and third-party material
+notice.
+
+`mtgfetcher` is unofficial Fan Content permitted under the [Wizards of the
+Coast Fan Content Policy](https://company.wizards.com/en/legal/fancontentpolicy).
+It is not approved or endorsed by Wizards of the Coast. Magic: The Gathering
+and related names, marks, card data, artwork, and other intellectual property
+remain the property of their respective rights holders.
+
+The script can retrieve publicly available data and image URLs from Scryfall,
+Wizards of the Coast, and Cardmarket at runtime. It does not grant any rights
+to that third-party material; use remains subject to the relevant providers'
+terms and policies.
