@@ -238,6 +238,72 @@ fields that Wizards does not publish are left blank. That makes a future
 Scryfall Art Card import a drop-in source replacement without changing the
 sheet layout.
 
+### Complete Hobbit configuration
+
+The following is a complete `hob.json` example for the regular Hobbit-related
+set tabs, separated official Art and Scene Card tabs, Cardmarket EUR `trend`
+prices, and a three-image-wide Scene gallery. Replace the spreadsheet ID with
+your own; `credentials.json` and `token.json` stay local and should not be
+committed.
+
+```json
+{
+  "spreadsheetId": "YOUR_SPREADSHEET_ID",
+  "credentialsPath": "credentials.json",
+  "imageCol": null,
+  "sets": [
+    { "code": "hob", "tab": "HOB" },
+    { "code": "thob", "tab": "THOB" },
+    { "code": "hoc", "tab": "HOC" },
+    { "code": "pw26", "tab": "PW26", "collectorRange": [14, 16] }
+  ],
+  "wizardsArtCards": [
+    {
+      "url": "https://magic.wizards.com/en/products/the-hobbit/card-image-gallery?cigquery=Art%20Card",
+      "tab": "HOB Art Cards",
+      "code": "HOB-ART",
+      "kind": "art",
+      "cardmarket": {
+        "expansionId": 6664,
+        "priceField": "trend",
+        "productIds": {
+          "27/54": 901174,
+          "45/54": 901221
+        }
+      }
+    },
+    {
+      "url": "https://magic.wizards.com/en/products/the-hobbit/card-image-gallery?cigquery=Art%20Card",
+      "tab": "HOB Scene Cards",
+      "code": "HOB-SCENE",
+      "kind": "scene",
+      "cardmarket": {
+        "expansionId": 6664,
+        "priceField": "trend"
+      }
+    }
+  ],
+  "sceneImageGallery": {
+    "sourceTab": "HOB Scene Cards",
+    "tab": "HOB Scenes",
+    "columns": 3
+  }
+}
+```
+
+Run it with:
+
+```powershell
+node .\mtg-to-sheets.js --config hob.json
+```
+
+Expected output includes `54` regular Art Cards, `12` Scene Art Cards, then:
+
+```text
+[HOB Scenes] Building image gallery from "HOB Scene Cards"…
+  ✓ 12 images → gallery "HOB Scenes" (3 per row)
+```
+
 ---
 
 ## CLI flags
