@@ -4,6 +4,8 @@ const assert = require('node:assert/strict');
 const {
   scryfallCardToRow,
   parseWizardsArtCards,
+  quoteSheetTab,
+  wizardsCardToRow,
 } = require('../mtg-to-sheets.js');
 
 test('converts a Scryfall JSON card to the legacy sheet columns', () => {
@@ -45,4 +47,28 @@ test('parses standalone Art Cards and can exclude Scene Art Cards from a Wizards
     name: 'Troop of Ponies Art Card 1/54', collector_number: '1/54', entryId: 'art-id', kind: 'art',
   }]);
   assert.deepEqual(parseWizardsArtCards(body, { includeSceneCards: true }).map(card => card.kind), ['scene', 'art']);
+});
+
+test('quotes sheet tab names in formulas, including embedded apostrophes', () => {
+  assert.equal(quoteSheetTab('HOB Art Cards'), "'HOB Art Cards'");
+  assert.equal(quoteSheetTab("Urza's Art"), "'Urza''s Art'");
+});
+
+test('maps an official Wizards Art Card to the same columns as a Scryfall card', () => {
+  const row = wizardsCardToRow({
+    code: 'HOB-ART', collector_number: '6/54', entryId: 'entry-id',
+    fallbackName: 'An Unexpected Party Art Card 6/54',
+    details: { name: 'An Unexpected Party Art Card 6/54', rarity: 'Art Card', artist: 'Matt Stewart', face: 'https://media.wizards.example/art.webp' },
+  });
+
+  assert.deepEqual(Object.keys(row), [
+    'multiverse_id', 'mtgo_id', 'set', 'collector_number', 'lang', 'rarity',
+    'name', 'mana_cost', 'cmc', 'type_line', 'artist', 'usd_price',
+    'usd_foil_price', 'eur_price', 'tix_price', 'image_uri', 'scryfall_uri',
+    'scryfall_id',
+  ]);
+  assert.equal(row.set, 'HOB-ART');
+  assert.equal(row.collector_number, '6/54');
+  assert.equal(row.image_uri, 'https://media.wizards.example/art.webp');
+  assert.equal(row.scryfall_id, 'wizards:entry-id');
 });

@@ -352,10 +352,10 @@ function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 // ── OFFICIAL WIZARDS ART-CARD FETCH ──────────────────────────────────────────
 
-const WIZARDS_ART_HEADERS = [
-  'set', 'collector_number', 'name', 'rarity', 'artist', 'image_uri',
-  'wizards_gallery_url', 'wizards_entry_id',
-];
+// Keep the official-gallery rows column-compatible with Scryfall rows. If
+// Scryfall adds Art Cards later, its rows can replace this source without
+// changing the sheet layout or breaking checkbox preservation.
+const WIZARDS_ART_HEADERS = SCRYFALL_HEADERS;
 
 /** Parse Wizards' server-rendered card list; its bracketed value is a Contentful entry ID. */
 function parseWizardsArtCards(cardListBody, { includeSceneCards = false } = {}) {
@@ -371,6 +371,29 @@ function parseWizardsArtCards(cardListBody, { includeSceneCards = false } = {}) 
       kind: scene ? 'scene' : 'art',
     }];
   });
+}
+
+function wizardsCardToRow({ code, collector_number, entryId, fallbackName, details }) {
+  return {
+    multiverse_id: '',
+    mtgo_id: '',
+    set: code,
+    collector_number,
+    lang: 'en',
+    rarity: details.rarity ?? 'Art Card',
+    name: details.name ?? fallbackName,
+    mana_cost: '',
+    cmc: '',
+    type_line: 'Art Card',
+    artist: details.artist ?? '',
+    usd_price: '',
+    usd_foil_price: '',
+    eur_price: '',
+    tix_price: '',
+    image_uri: details.face,
+    scryfall_uri: '',
+    scryfall_id: `wizards:${entryId}`,
+  };
 }
 
 function extractWizardsCardList(html) {
@@ -414,16 +437,10 @@ async function fetchWizardsArtCards({ url, tab, code = 'WIZARDS-ART', includeSce
   const rows = cards.map(card => {
     const details = entries.get(card.entryId);
     if (!details?.face) throw new Error(`Wizards Art Card ${card.collector_number} did not include an image`);
-    return {
-      set: code,
-      collector_number: card.collector_number,
-      name: details.name ?? card.name,
-      rarity: details.rarity ?? 'Art Card',
-      artist: details.artist ?? '',
-      image_uri: details.face,
-      wizards_gallery_url: url,
-      wizards_entry_id: card.entryId,
-    };
+    return wizardsCardToRow({
+      code, collector_number: card.collector_number, entryId: card.entryId,
+      fallbackName: card.name, details,
+    });
   });
   return { headers: WIZARDS_ART_HEADERS, rows };
 }
@@ -435,6 +452,10 @@ function colLetter(idx) {
   for (let n = idx + 1; n > 0; n = Math.floor((n - 1) / 26))
     s = String.fromCharCode(64 + ((n - 1) % 26 + 1)) + s;
   return s;
+}
+
+function quoteSheetTab(tabName) {
+  return `'${String(tabName).replaceAll("'", "''")}'`;
 }
 
 function findImageColIdx(headers, imageColOverride) {
@@ -692,9 +713,10 @@ async function createDashboard(sheets, spreadsheetId, sets, csvHeaders, sep) {
 
   // Inside the QUERY string, column separator is always "," (QUERY language syntax).
   // Only the outer Sheets function argument separator (S) is locale-dependent.
-  const missingQuery  = tab => `=QUERY(${tab}!A2:${lastCol}${S}"SELECT ${nameCol},${numCol} WHERE A = FALSE"${S}0)`;
-  const countMissing  = tab => `COUNTIF(${tab}!A2:A${S}FALSE)`;
-  const countTotal    = tab => `COUNTA(${tab}!C2:C)`;
+  const sheetRef = tab => quoteSheetTab(tab);
+  const missingQuery  = tab => `=QUERY(${sheetRef(tab)}!A2:${lastCol}${S}"SELECT ${nameCol},${numCol} WHERE A = FALSE"${S}0)`;
+  const countMissing  = tab => `COUNTIF(${sheetRef(tab)}!A2:A${S}FALSE)`;
+  const countTotal    = tab => `COUNTA(${sheetRef(tab)}!C2:C)`;
 
   // ── Get or create Dashboard tab at index 0 ──────────────────────────────────
   const meta     = await sheets.spreadsheets.get({ spreadsheetId });
@@ -904,5 +926,5 @@ if (require.main === module) {
 
 module.exports = {
   authorize, isInvalidGrantError, scryfallCardToRow, parseWizardsArtCards,
-  fetchSet, fetchWizardsArtCards,
+  wizardsCardToRow, quoteSheetTab, fetchSet, fetchWizardsArtCards,
 };
