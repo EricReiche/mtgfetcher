@@ -11,6 +11,8 @@ const {
   enrichWizardsArtCardPrices,
   buildImageGalleryFormulas,
   resolveConfig,
+  cardmarketFeedKey,
+  getCachedCardmarketFeed,
 } = require('../mtg-to-sheets.js');
 
 test('converts a Scryfall JSON card to the legacy sheet columns', () => {
@@ -141,6 +143,24 @@ test('matches a Cardmarket Scene product name to a Wizards Scene Art Card', () =
   const { rows: enriched, stats } = enrichWizardsArtCardPrices(rows, products, guides, { expansionId: 6664 });
   assert.equal(enriched[0].eur_price, '1.5');
   assert.deepEqual(stats, { priced: 1, unavailable: 0, unmatched: 0, overridden: 0 });
+});
+
+test('downloads a Cardmarket feed only once for matching configurations', async () => {
+  const cache = new Map();
+  let loads = 0;
+  const load = async () => ({ products: [], priceGuides: [], load: ++loads });
+  const first = await getCachedCardmarketFeed(cache, {}, load);
+  const second = await getCachedCardmarketFeed(cache, { expansionId: 6664, priceField: 'trend' }, load);
+  assert.equal(loads, 1);
+  assert.equal(first, second);
+});
+
+test('uses one Cardmarket cache key for entries with the same feed URLs', () => {
+  assert.equal(cardmarketFeedKey({}), cardmarketFeedKey({ priceField: 'avg7', expansionId: 6664 }));
+  assert.notEqual(
+    cardmarketFeedKey({ productCatalogueUrl: 'https://example.test/catalogue.json' }),
+    cardmarketFeedKey({}),
+  );
 });
 
 test('keeps sceneImageGallery from the loaded config', () => {

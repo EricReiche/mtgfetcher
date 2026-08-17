@@ -368,6 +368,19 @@ const CARDMARKET_PRICE_GUIDE_URL =
   'https://downloads.s3.cardmarket.com/productCatalog/priceGuide/price_guide_1.json';
 const CARDMARKET_PRICE_FIELDS = new Set(['avg', 'low', 'trend', 'avg1', 'avg7', 'avg30']);
 
+function cardmarketFeedKey(config = {}) {
+  return JSON.stringify([
+    config.productCatalogueUrl ?? CARDMARKET_PRODUCT_CATALOGUE_URL,
+    config.priceGuideUrl ?? CARDMARKET_PRICE_GUIDE_URL,
+  ]);
+}
+
+async function getCachedCardmarketFeed(cache, config, load = fetchCardmarketArtPrices) {
+  const key = cardmarketFeedKey(config);
+  if (!cache.has(key)) cache.set(key, Promise.resolve().then(() => load(config)));
+  return cache.get(key);
+}
+
 /** Parse Wizards' server-rendered card list; its bracketed value is a Contentful entry ID. */
 function parseWizardsArtCards(cardListBody, { includeSceneCards = false, kind = null } = {}) {
   if (kind !== null && kind !== 'art' && kind !== 'scene')
@@ -515,7 +528,7 @@ async function getWizardsContentfulToken(galleryHtml) {
 
 async function fetchWizardsArtCards({
   url, tab, code = 'WIZARDS-ART', includeSceneCards = false, kind = null, cardmarket = null,
-}) {
+}, cardmarketData = null) {
   if (!url || !tab) throw new Error('Each wizardsArtCards entry needs both "url" and "tab"');
   const gallery = await httpGet(url);
   if (gallery.status !== 200) throw new Error(`Could not load Wizards gallery (HTTP ${gallery.status})`);
@@ -547,8 +560,7 @@ async function fetchWizardsArtCards({
   });
 
   if (cardmarket) {
-    console.log('  Fetching Cardmarket EUR price guide…');
-    const { products, priceGuides } = await fetchCardmarketArtPrices(cardmarket);
+    const { products, priceGuides } = cardmarketData ?? await fetchCardmarketArtPrices(cardmarket);
     const enriched = enrichWizardsArtCardPrices(rows, products, priceGuides, cardmarket);
     rows = enriched.rows;
     const { priced, unavailable, unmatched, overridden } = enriched.stats;
@@ -1091,9 +1103,19 @@ async function main() {
     console.log('');
   }
 
+  const cardmarketFeeds = new Map(); // feed-URL pair → parsed public Cardmarket data
   for (const artConfig of cfg.wizardsArtCards) {
+    let cardmarketData = null;
+    if (artConfig.cardmarket) {
+      const feedKey = cardmarketFeedKey(artConfig.cardmarket);
+      const reused = cardmarketFeeds.has(feedKey);
+      cardmarketData = await getCachedCardmarketFeed(cardmarketFeeds, artConfig.cardmarket);
+      console.log(reused
+        ? '  Reusing downloaded Cardmarket EUR price guide…'
+        : '  Downloaded Cardmarket EUR price guide…');
+    }
     console.log(`[${artConfig.tab}] Fetching official Wizards Art Cards…`);
-    const { headers, rows } = await fetchWizardsArtCards(artConfig);
+    const { headers, rows } = await fetchWizardsArtCards(artConfig, cardmarketData);
     console.log(`  ${rows.length} total Art Cards. Writing…`);
     await writeTab(sheets, cfg.spreadsheetId, artConfig.tab, headers, rows, cfg.imageCol, cfg.preserveChecks);
     doneSets.push({ code: artConfig.code ?? 'WIZARDS-ART', tab: artConfig.tab });
@@ -1125,5 +1147,5 @@ if (require.main === module) {
 module.exports = {
   authorize, isInvalidGrantError, resolveConfig, scryfallCardToRow, parseWizardsArtCards,
   wizardsCardToRow, quoteSheetTab, buildImageGalleryFormulas, extractWizardsContentfulToken, checkboxKey,
-  enrichWizardsArtCardPrices, fetchSet, fetchWizardsArtCards,
+  enrichWizardsArtCardPrices, cardmarketFeedKey, getCachedCardmarketFeed, fetchSet, fetchWizardsArtCards,
 };
