@@ -7,3 +7,4 @@ token.json
 
 # Node
 node_modules/
+set-*.json
