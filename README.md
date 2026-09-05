@@ -388,6 +388,7 @@ node mtg-to-sheets.js --formula-sep ,
 Just run the script again. By default (`preserveChecks: true`) it will:
 - Re-download fresh card data from Scryfall
 - Keep all Collected and Foiled checkboxes you've ticked, matched by **set code + collector number**
+- Keep any user-edited `lang` values, even when `preserveChecks` is disabled
 - Reset any card not matched (e.g. newly added promos will start unchecked)
 
 Sheets created by an older version are migrated automatically: existing Collected

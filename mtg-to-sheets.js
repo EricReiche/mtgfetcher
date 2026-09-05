@@ -638,7 +638,7 @@ function coerceValue(v) {
   return v;
 }
 
-// ── CHECKBOX PRESERVATION ─────────────────────────────────────────────────────
+// ── USER-EDITED STATE PRESERVATION ────────────────────────────────────────────
 
 // Scryfall's CSV export uses uppercase set codes (e.g. HOB), while its JSON
 // API uses lowercase (hob). Normalize both sides so a source-format change
@@ -648,7 +648,7 @@ function checkboxKey(setCode, collectorNumber) {
 }
 
 /**
- * Read the existing sheet and return a Map of "set:collector_number" → checkbox state.
+ * Read the existing sheet and return a Map of "set:collector_number" → preserved state.
  * Columns are matched by header name, not position, so reordering is safe.
  * Sheets created before the Foiled column existed migrate with foiled=false.
  */
@@ -670,11 +670,12 @@ async function readCheckboxMap(sheets, spreadsheetId, tabName) {
   const colIdx = name => headerRow.indexOf(name);
   const collectedCol = colIdx('Collected');
   const foiledCol    = colIdx('Foiled');
+  const langCol      = colIdx('lang');
   const setCol   = colIdx('set');
   const numCol   = colIdx('collector_number');
 
   if (setCol === -1 || numCol === -1) {
-    console.warn('  Warning: could not find "set" or "collector_number" columns — checkboxes not preserved');
+    console.warn('  Warning: could not find "set" or "collector_number" columns — user-edited state not preserved');
     return new Map();
   }
 
@@ -683,7 +684,9 @@ async function readCheckboxMap(sheets, spreadsheetId, tabName) {
     const collected = collectedCol >= 0 && String(row[collectedCol] ?? '').toUpperCase() === 'TRUE';
     const foiled = foiledCol >= 0 && String(row[foiledCol] ?? '').toUpperCase() === 'TRUE';
     const key = checkboxKey(row[setCol], row[numCol]);
-    if (collected || foiled) map.set(key, { collected, foiled });
+    const state = { collected, foiled };
+    if (langCol >= 0) state.lang = row[langCol] ?? '';
+    if (collected || foiled || langCol >= 0) map.set(key, state);
   }
   return map;
 }
@@ -691,11 +694,13 @@ async function readCheckboxMap(sheets, spreadsheetId, tabName) {
 // ── WRITE ONE TAB ─────────────────────────────────────────────────────────────
 
 async function writeTab(sheets, spreadsheetId, tabName, csvHeaders, rows, imageColOverride, preserveChecks) {
-  // Snapshot existing checkboxes before we clear anything
-  const checkMap = preserveChecks
-    ? await readCheckboxMap(sheets, spreadsheetId, tabName)
-    : new Map();
-  if (preserveChecks) console.log(`  Preserved checkbox state for ${checkMap.size} card(s)`);
+  // Snapshot existing checkbox and language values before we clear anything.
+  // Language is always preserved; preserveChecks only controls the checkboxes.
+  const preservedMap = await readCheckboxMap(sheets, spreadsheetId, tabName);
+  if (preserveChecks) {
+    const checkedCount = [...preservedMap.values()].filter(state => state.collected || state.foiled).length;
+    console.log(`  Preserved checkbox state for ${checkedCount} card(s)`);
+  }
 
   // Get or create the sheet tab
   const meta = await sheets.spreadsheets.get({ spreadsheetId });
@@ -734,8 +739,16 @@ async function writeTab(sheets, spreadsheetId, tabName, csvHeaders, rows, imageC
   // number parsing (German "." = thousands sep would corrupt "46.14" → 46140).
   const dataRows = rows.map(row => {
     const key = checkboxKey(row['set'], row['collector_number']);
-    const state = checkMap.get(key) ?? { collected: false, foiled: false };
-    return [state.collected, state.foiled, '', ...csvHeaders.map(h => coerceValue(row[h] ?? ''))];
+    const state = preservedMap.get(key);
+    const collected = preserveChecks && Boolean(state?.collected);
+    const foiled = preserveChecks && Boolean(state?.foiled);
+    const values = csvHeaders.map(header => {
+      const value = header === 'lang' && state && Object.hasOwn(state, 'lang')
+        ? state.lang
+        : row[header] ?? '';
+      return coerceValue(value);
+    });
+    return [collected, foiled, '', ...values];
   });
 
   // Pass 1: data + checkboxes as RAW (numbers stay numbers, no locale mangling)

@@ -133,15 +133,15 @@ test('preserves Collected and Foiled independently on current sheets', async () 
   );
 });
 
-test('writes Foiled as the second checkbox column while migrating legacy Collected values', async () => {
+test('writes Foiled second while preserving legacy Collected and user-edited lang values', async () => {
   const updates = [];
   const batches = [];
   const sheets = { spreadsheets: {
     get: async () => ({ data: { sheets: [{ properties: { title: 'HOB', sheetId: 7 } }] } }),
     values: {
       get: async () => ({ data: { values: [
-        ['Collected', 'Image', 'set', 'collector_number', 'image_uri'],
-        [true, '=IMAGE(E2)', 'HOB', '60', 'https://cards.example/60.jpg'],
+        ['Collected', 'Image', 'set', 'collector_number', 'lang', 'image_uri'],
+        [true, '=IMAGE(F2)', 'HOB', '60', 'custom-lang', 'https://cards.example/60.jpg'],
       ] } }),
       clear: async () => {},
       update: async request => { updates.push(request); },
@@ -149,20 +149,40 @@ test('writes Foiled as the second checkbox column while migrating legacy Collect
     batchUpdate: async request => { batches.push(request); },
   } };
 
-  await writeTab(sheets, 'sheet-id', 'HOB', ['set', 'collector_number', 'image_uri'], [{
-    set: 'hob', collector_number: '60', image_uri: 'https://cards.example/60.jpg',
-  }], null, true);
+  const headers = ['set', 'collector_number', 'lang', 'image_uri'];
+  const rows = [{
+    set: 'hob', collector_number: '60', lang: 'en', image_uri: 'https://cards.example/60.jpg',
+  }];
+  await writeTab(sheets, 'sheet-id', 'HOB', headers, [...rows], null, true);
+  await writeTab(sheets, 'sheet-id', 'HOB', headers, [...rows], null, false);
 
   assert.deepEqual(updates[0].requestBody.values, [
-    ['Collected', 'Foiled', 'Image', 'set', 'collector_number', 'image_uri'],
-    [true, false, '', 'hob', 60, 'https://cards.example/60.jpg'],
+    ['Collected', 'Foiled', 'Image', 'set', 'collector_number', 'lang', 'image_uri'],
+    [true, false, '', 'hob', 60, 'custom-lang', 'https://cards.example/60.jpg'],
   ]);
   assert.equal(updates[1].range, "'HOB'!C2");
-  assert.deepEqual(updates[1].requestBody.values, [['=IMAGE(F2)']]);
+  assert.deepEqual(updates[1].requestBody.values, [['=IMAGE(G2)']]);
+
+  assert.deepEqual(updates[2].requestBody.values, [
+    ['Collected', 'Foiled', 'Image', 'set', 'collector_number', 'lang', 'image_uri'],
+    [false, false, '', 'hob', 60, 'custom-lang', 'https://cards.example/60.jpg'],
+  ]);
 
   const validation = batches[0].requestBody.requests.find(request => request.setDataValidation);
   assert.equal(validation.setDataValidation.range.startColumnIndex, 0);
   assert.equal(validation.setDataValidation.range.endColumnIndex, 2);
+});
+
+test('captures a blank user-edited lang value for preservation', async () => {
+  const sheets = { spreadsheets: { values: { get: async () => ({ data: { values: [
+    ['Collected', 'Foiled', 'set', 'collector_number', 'lang'],
+    [false, false, 'hob', '60', ''],
+  ] } }) } } };
+
+  assert.deepEqual(
+    await readCheckboxMap(sheets, 'sheet-id', 'HOB'),
+    new Map([['hob:60', { collected: false, foiled: false, lang: '' }]]),
+  );
 });
 
 test('fills Art Card EUR price from the Cardmarket trend guide using the base variant', () => {
