@@ -184,6 +184,20 @@ function isInvalidGrantError(err) {
   return err?.response?.data?.error === 'invalid_grant' || err?.code === 'invalid_grant';
 }
 
+function extractAuthCode(input) {
+  const trimmed = String(input ?? '').trim();
+  const normalized = trimmed.replace(/\\&/g, '&');
+  const markdownUrl = normalized.match(/^\[[^\]]*\]\((https?:\/\/.+)\)$/)?.[1];
+  const candidate = markdownUrl ?? normalized;
+
+  try {
+    const url = new URL(candidate);
+    return url.searchParams.get('code') ?? trimmed;
+  } catch {
+    return trimmed;
+  }
+}
+
 async function authorizeInteractively(oAuth2, tokenPath) {
   // prompt: 'consent' guarantees Google returns a fresh refresh token after a
   // previously cached token was revoked or expired.
@@ -192,10 +206,10 @@ async function authorizeInteractively(oAuth2, tokenPath) {
   console.log(authUrl + '\n');
 
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  const code = await new Promise(res => rl.question('Paste the auth code here: ', res));
+  const input = await new Promise(res => rl.question('Paste the auth code or callback URL here: ', res));
   rl.close();
 
-  const { tokens } = await oAuth2.getToken(code.trim());
+  const { tokens } = await oAuth2.getToken(extractAuthCode(input));
   oAuth2.setCredentials(tokens);
   fs.writeFileSync(tokenPath, JSON.stringify(tokens, null, 2));
   console.log(`Token cached in ${tokenPath}\n`);
@@ -1148,7 +1162,7 @@ if (require.main === module) {
 }
 
 module.exports = {
-  authorize, isInvalidGrantError, resolveConfig, scryfallCardToRow, parseWizardsArtCards,
+  authorize, isInvalidGrantError, extractAuthCode, resolveConfig, scryfallCardToRow, parseWizardsArtCards,
   wizardsCardToRow, quoteSheetTab, buildImageGalleryFormulas, extractWizardsContentfulToken, checkboxKey, readCheckboxMap, writeTab,
   enrichWizardsArtCardPrices, cardmarketFeedKey, getCachedCardmarketFeed, fetchSet, fetchWizardsArtCards,
 };

@@ -6,7 +6,7 @@ const path = require('node:path');
 const readline = require('node:readline');
 const { google } = require('googleapis');
 
-const { authorize, isInvalidGrantError } = require('../mtg-to-sheets.js');
+const { authorize, isInvalidGrantError, extractAuthCode } = require('../mtg-to-sheets.js');
 
 test('recognizes an invalid_grant returned while refreshing a Google OAuth token', () => {
   const error = {
@@ -23,6 +23,19 @@ test('recognizes an invalid_grant returned while refreshing a Google OAuth token
 
 test('does not treat unrelated API errors as a stale OAuth token', () => {
   assert.equal(isInvalidGrantError(new Error('Request failed with status code 403')), false);
+});
+
+test('accepts either a raw OAuth code or a localhost callback URL', () => {
+  assert.equal(extractAuthCode('  4/0Araw_code  '), '4/0Araw_code');
+  assert.equal(
+    extractAuthCode('http://localhost/?iss=https://accounts.google.com&code=4%2F0Aurl_code&scope=https://www.googleapis.com/auth/spreadsheets'),
+    '4/0Aurl_code',
+  );
+});
+
+test('extracts an OAuth code from a pasted Markdown callback link', () => {
+  const pasted = '[http://localhost/?code=4/0Alabel](http://localhost/?iss=https://accounts.google.com\\&code=4/0Amarkdown_code\\&scope=https://www.googleapis.com/auth/spreadsheets)';
+  assert.equal(extractAuthCode(pasted), '4/0Amarkdown_code');
 });
 
 test('forces a refresh even if a cached access token is not yet expired', async t => {
@@ -62,7 +75,10 @@ test('forces a refresh even if a cached access token is not yet expired', async 
   }
 
   google.auth.OAuth2 = FakeOAuth2;
-  readline.createInterface = () => ({ question: (_prompt, callback) => callback('fresh-code'), close: () => {} });
+  readline.createInterface = () => ({
+    question: (_prompt, callback) => callback('http://localhost/?iss=https://accounts.google.com&code=fresh-code&scope=https://www.googleapis.com/auth/spreadsheets'),
+    close: () => {},
+  });
 
   const client = await authorize(credentialsPath, tokenPath);
 
@@ -103,7 +119,10 @@ test('replaces a rejected cached token before the first Sheets request', async t
   }
 
   google.auth.OAuth2 = FakeOAuth2;
-  readline.createInterface = () => ({ question: (_prompt, callback) => callback('fresh-code'), close: () => {} });
+  readline.createInterface = () => ({
+    question: (_prompt, callback) => callback('http://localhost/?iss=https://accounts.google.com&code=fresh-code&scope=https://www.googleapis.com/auth/spreadsheets'),
+    close: () => {},
+  });
 
   const client = await authorize(credentialsPath, tokenPath);
 
