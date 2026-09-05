@@ -2,7 +2,7 @@
 /**
  * mtg-to-sheets.js
  * Downloads Scryfall card JSON (with pagination) and writes it to Google Sheets.
- * One tab per set code. Adds a checkbox column and an image formula column.
+ * One tab per set code. Adds collected/foiled checkbox columns and an image formula column.
  *
  * ── SETUP ──────────────────────────────────────────────────────────────────
  *   npm install googleapis
@@ -634,8 +634,9 @@ function checkboxKey(setCode, collectorNumber) {
 }
 
 /**
- * Read the existing sheet and return a Map of "set:collector_number" → true/false.
+ * Read the existing sheet and return a Map of "set:collector_number" → checkbox state.
  * Columns are matched by header name, not position, so reordering is safe.
+ * Sheets created before the Foiled column existed migrate with foiled=false.
  */
 async function readCheckboxMap(sheets, spreadsheetId, tabName) {
   let res;
@@ -653,8 +654,9 @@ async function readCheckboxMap(sheets, spreadsheetId, tabName) {
   if (!headerRow) return new Map();
 
   const colIdx = name => headerRow.indexOf(name);
-  const checkCol = 0;                          // col A = Collected
-  const setCol   = colIdx('set');              // within the full row (A=0, B=1, C=2 = first CSV col)
+  const collectedCol = colIdx('Collected');
+  const foiledCol    = colIdx('Foiled');
+  const setCol   = colIdx('set');
   const numCol   = colIdx('collector_number');
 
   if (setCol === -1 || numCol === -1) {
@@ -664,9 +666,10 @@ async function readCheckboxMap(sheets, spreadsheetId, tabName) {
 
   const map = new Map();
   for (const row of dataRows) {
-    const checked = String(row[checkCol] ?? '').toUpperCase() === 'TRUE';
+    const collected = collectedCol >= 0 && String(row[collectedCol] ?? '').toUpperCase() === 'TRUE';
+    const foiled = foiledCol >= 0 && String(row[foiledCol] ?? '').toUpperCase() === 'TRUE';
     const key = checkboxKey(row[setCol], row[numCol]);
-    if (checked) map.set(key, true);
+    if (collected || foiled) map.set(key, { collected, foiled });
   }
   return map;
 }
@@ -678,7 +681,7 @@ async function writeTab(sheets, spreadsheetId, tabName, csvHeaders, rows, imageC
   const checkMap = preserveChecks
     ? await readCheckboxMap(sheets, spreadsheetId, tabName)
     : new Map();
-  if (preserveChecks) console.log(`  Preserved ${checkMap.size} checked card(s)`);
+  if (preserveChecks) console.log(`  Preserved checkbox state for ${checkMap.size} card(s)`);
 
   // Get or create the sheet tab
   const meta = await sheets.spreadsheets.get({ spreadsheetId });
@@ -705,20 +708,20 @@ async function writeTab(sheets, spreadsheetId, tabName, csvHeaders, rows, imageC
     return String(a.collector_number).localeCompare(String(b.collector_number), undefined, { numeric: true });
   });
 
-  // Column layout:  A=Collected  B=Image  C..=CSV columns
+  // Column layout:  A=Collected  B=Foiled  C=Image  D..=CSV columns
   const imgCsvIdx   = findImageColIdx(csvHeaders, imageColOverride);
-  const imgSheetIdx = imgCsvIdx >= 0 ? 2 + imgCsvIdx : -1;
+  const imgSheetIdx = imgCsvIdx >= 0 ? 3 + imgCsvIdx : -1;
   const imgColLet   = imgSheetIdx >= 0 ? colLetter(imgSheetIdx) : null;
 
-  const headerRow = ['Collected', 'Image', ...csvHeaders];
+  const headerRow = ['Collected', 'Foiled', 'Image', ...csvHeaders];
 
   // Strip image formula from data rows — we write it separately with USER_ENTERED
   // so formulas evaluate. Everything else goes RAW to bypass locale-dependent
   // number parsing (German "." = thousands sep would corrupt "46.14" → 46140).
   const dataRows = rows.map(row => {
-    const key     = checkboxKey(row['set'], row['collector_number']);
-    const checked = checkMap.has(key); // JS boolean — RAW mode stores it as Sheets boolean
-    return [checked, '', ...csvHeaders.map(h => coerceValue(row[h] ?? ''))];
+    const key = checkboxKey(row['set'], row['collector_number']);
+    const state = checkMap.get(key) ?? { collected: false, foiled: false };
+    return [state.collected, state.foiled, '', ...csvHeaders.map(h => coerceValue(row[h] ?? ''))];
   });
 
   // Pass 1: data + checkboxes as RAW (numbers stay numbers, no locale mangling)
@@ -729,12 +732,12 @@ async function writeTab(sheets, spreadsheetId, tabName, csvHeaders, rows, imageC
     requestBody: { values: [headerRow, ...dataRows] },
   });
 
-  // Pass 2: image formulas in col B as USER_ENTERED so they are evaluated
+  // Pass 2: image formulas in col C as USER_ENTERED so they are evaluated
   if (imgColLet) {
     const formulaValues = rows.map((_, i) => [`=IMAGE(${imgColLet}${i + 2})`]);
     await sheets.spreadsheets.values.update({
       spreadsheetId,
-      range: `'${tabName}'!B2`,
+      range: `'${tabName}'!C2`,
       valueInputOption: 'USER_ENTERED',
       requestBody: { values: formulaValues },
     });
@@ -745,11 +748,11 @@ async function writeTab(sheets, spreadsheetId, tabName, csvHeaders, rows, imageC
   const numCols  = headerRow.length;
 
   const priceColIndices = csvHeaders
-    .map((h, i) => /price|usd|eur|tix/i.test(h) ? 2 + i : -1)
+    .map((h, i) => /price|usd|eur|tix/i.test(h) ? 3 + i : -1)
     .filter(i => i >= 0);
 
   const dataRange    = { sheetId, startRowIndex: 1, endRowIndex: numRows + 1 };
-  const checkColRange = { ...dataRange, startColumnIndex: 0, endColumnIndex: 1 };
+  const checkColRange = { ...dataRange, startColumnIndex: 0, endColumnIndex: 2 };
 
   const requests = [
     // Freeze header row
@@ -767,14 +770,14 @@ async function writeTab(sheets, spreadsheetId, tabName, csvHeaders, rows, imageC
         fields: 'userEnteredFormat.textFormat.bold',
       },
     },
-    // Checkbox validation on col A
+    // Checkbox validation on cols A:B
     {
       setDataValidation: {
         range: checkColRange,
         rule: { condition: { type: 'BOOLEAN' }, strict: true, showCustomUi: true },
       },
     },
-    // Checkbox cell type on col A (renders the actual checkbox widget)
+    // Checkbox cell type on cols A:B (renders the actual checkbox widgets)
     {
       repeatCell: {
         range: checkColRange,
@@ -790,26 +793,26 @@ async function writeTab(sheets, spreadsheetId, tabName, csvHeaders, rows, imageC
         fields: 'pixelSize',
       },
     },
-    // Col A (Collected): narrow — just fits a checkbox
+    // Cols A:B (Collected/Foiled): narrow — just fit checkboxes
     {
       updateDimensionProperties: {
-        range: { sheetId, dimension: 'COLUMNS', startIndex: 0, endIndex: 1 },
+        range: { sheetId, dimension: 'COLUMNS', startIndex: 0, endIndex: 2 },
         properties: { pixelSize: 90 },
         fields: 'pixelSize',
       },
     },
-    // Col B (Image): wide enough for a card image
+    // Col C (Image): wide enough for a card image
     {
       updateDimensionProperties: {
-        range: { sheetId, dimension: 'COLUMNS', startIndex: 1, endIndex: 2 },
+        range: { sheetId, dimension: 'COLUMNS', startIndex: 2, endIndex: 3 },
         properties: { pixelSize: 215 },
         fields: 'pixelSize',
       },
     },
-    // Auto-resize all other columns (C onwards)
+    // Auto-resize all other columns (D onwards)
     {
       autoResizeDimensions: {
-        dimensions: { sheetId, dimension: 'COLUMNS', startIndex: 2, endIndex: numCols },
+        dimensions: { sheetId, dimension: 'COLUMNS', startIndex: 3, endIndex: numCols },
       },
     },
   ];
@@ -838,7 +841,7 @@ async function createImageGallery(sheets, spreadsheetId, {
   if (!sourceTab || !tab) throw new Error('sceneImageGallery needs both "sourceTab" and "tab"');
   const imageIndex = findImageColIdx(sourceHeaders, null);
   if (imageIndex < 0) throw new Error(`Could not find an image URL column for gallery source "${sourceTab}"`);
-  const imageColumn = colLetter(2 + imageIndex); // source tabs prepend Collected + Image
+  const imageColumn = colLetter(3 + imageIndex); // source tabs prepend Collected + Foiled + Image
   const formulas = buildImageGalleryFormulas(sourceTab, imageColumn, sourceRowCount, columns);
 
   const meta = await sheets.spreadsheets.get({ spreadsheetId });
@@ -902,10 +905,10 @@ async function createDashboard(sheets, spreadsheetId, sets, csvHeaders, sep) {
     return;
   }
 
-  // Column letters as they appear in each set tab (offset by 2 for Collected + Image)
-  const nameCol = colLetter(2 + nameIdx);
-  const numCol  = colLetter(2 + numIdx);
-  const lastCol = colLetter(2 + csvHeaders.length - 1);
+  // Column letters as they appear in each set tab (offset by 3 for Collected + Foiled + Image)
+  const nameCol = colLetter(3 + nameIdx);
+  const numCol  = colLetter(3 + numIdx);
+  const lastCol = colLetter(3 + csvHeaders.length - 1);
 
   const S = sep; // formula argument separator (';' for German/EU, ',' for US)
 
@@ -914,7 +917,7 @@ async function createDashboard(sheets, spreadsheetId, sets, csvHeaders, sep) {
   const sheetRef = tab => quoteSheetTab(tab);
   const missingQuery  = tab => `=QUERY(${sheetRef(tab)}!A2:${lastCol}${S}"SELECT ${nameCol},${numCol} WHERE A = FALSE"${S}0)`;
   const countMissing  = tab => `COUNTIF(${sheetRef(tab)}!A2:A${S}FALSE)`;
-  const countTotal    = tab => `COUNTA(${sheetRef(tab)}!C2:C)`;
+  const countTotal    = tab => `COUNTA(${sheetRef(tab)}!D2:D)`;
 
   // ── Get or create Dashboard tab at index 0 ──────────────────────────────────
   const meta     = await sheets.spreadsheets.get({ spreadsheetId });
@@ -1146,6 +1149,6 @@ if (require.main === module) {
 
 module.exports = {
   authorize, isInvalidGrantError, resolveConfig, scryfallCardToRow, parseWizardsArtCards,
-  wizardsCardToRow, quoteSheetTab, buildImageGalleryFormulas, extractWizardsContentfulToken, checkboxKey,
+  wizardsCardToRow, quoteSheetTab, buildImageGalleryFormulas, extractWizardsContentfulToken, checkboxKey, readCheckboxMap, writeTab,
   enrichWizardsArtCardPrices, cardmarketFeedKey, getCachedCardmarketFeed, fetchSet, fetchWizardsArtCards,
 };

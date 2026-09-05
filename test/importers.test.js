@@ -13,6 +13,8 @@ const {
   resolveConfig,
   cardmarketFeedKey,
   getCachedCardmarketFeed,
+  readCheckboxMap,
+  writeTab,
 } = require('../mtg-to-sheets.js');
 
 test('converts a Scryfall JSON card to the legacy sheet columns', () => {
@@ -101,6 +103,66 @@ test('uses case-independent checkbox keys across CSV and JSON Scryfall set codes
   assert.equal(checkboxKey('HOB', '60'), 'hob:60');
   assert.equal(checkboxKey('hob', 60), 'hob:60');
   assert.equal(checkboxKey(' HOB ', ' 60 '), 'hob:60');
+});
+
+test('migrates legacy sheets by preserving Collected and defaulting Foiled to false', async () => {
+  const sheets = { spreadsheets: { values: { get: async () => ({ data: { values: [
+    ['Collected', 'Image', 'set', 'collector_number'],
+    [true, '=IMAGE(...)', 'HOB', '60'],
+  ] } }) } } };
+
+  assert.deepEqual(
+    await readCheckboxMap(sheets, 'sheet-id', 'HOB'),
+    new Map([['hob:60', { collected: true, foiled: false }]]),
+  );
+});
+
+test('preserves Collected and Foiled independently on current sheets', async () => {
+  const sheets = { spreadsheets: { values: { get: async () => ({ data: { values: [
+    ['Collected', 'Foiled', 'Image', 'set', 'collector_number'],
+    [false, true, '=IMAGE(...)', 'hob', '61'],
+    [true, false, '=IMAGE(...)', 'hob', '62'],
+  ] } }) } } };
+
+  assert.deepEqual(
+    await readCheckboxMap(sheets, 'sheet-id', 'HOB'),
+    new Map([
+      ['hob:61', { collected: false, foiled: true }],
+      ['hob:62', { collected: true, foiled: false }],
+    ]),
+  );
+});
+
+test('writes Foiled as the second checkbox column while migrating legacy Collected values', async () => {
+  const updates = [];
+  const batches = [];
+  const sheets = { spreadsheets: {
+    get: async () => ({ data: { sheets: [{ properties: { title: 'HOB', sheetId: 7 } }] } }),
+    values: {
+      get: async () => ({ data: { values: [
+        ['Collected', 'Image', 'set', 'collector_number', 'image_uri'],
+        [true, '=IMAGE(E2)', 'HOB', '60', 'https://cards.example/60.jpg'],
+      ] } }),
+      clear: async () => {},
+      update: async request => { updates.push(request); },
+    },
+    batchUpdate: async request => { batches.push(request); },
+  } };
+
+  await writeTab(sheets, 'sheet-id', 'HOB', ['set', 'collector_number', 'image_uri'], [{
+    set: 'hob', collector_number: '60', image_uri: 'https://cards.example/60.jpg',
+  }], null, true);
+
+  assert.deepEqual(updates[0].requestBody.values, [
+    ['Collected', 'Foiled', 'Image', 'set', 'collector_number', 'image_uri'],
+    [true, false, '', 'hob', 60, 'https://cards.example/60.jpg'],
+  ]);
+  assert.equal(updates[1].range, "'HOB'!C2");
+  assert.deepEqual(updates[1].requestBody.values, [['=IMAGE(F2)']]);
+
+  const validation = batches[0].requestBody.requests.find(request => request.setDataValidation);
+  assert.equal(validation.setDataValidation.range.startColumnIndex, 0);
+  assert.equal(validation.setDataValidation.range.endColumnIndex, 2);
 });
 
 test('fills Art Card EUR price from the Cardmarket trend guide using the base variant', () => {

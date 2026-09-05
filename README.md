@@ -87,11 +87,12 @@ For each configured set it:
 1. Fetches all paginated pages from the Scryfall `/cards/search` API
 2. Sorts cards by collector number
 3. Applies any configured collector number filter (`collectorRange` or `collectorList`)
-4. Preserves existing checkboxes (matched by set code + collector number)
+4. Preserves existing Collected and Foiled checkboxes (matched by set code + collector number)
 5. Writes a tab to the spreadsheet with:
-   - **Column A** — checkbox (tick when you own it)
-   - **Column B** — card image (`=IMAGE(...)` formula)
-   - **Columns C+** — all Scryfall CSV columns (name, rarity, prices, etc.)
+   - **Column A** — Collected checkbox (tick when you own it)
+   - **Column B** — Foiled checkbox (tick when your copy is foil)
+   - **Column C** — card image (`=IMAGE(...)` formula)
+   - **Columns D+** — all Scryfall CSV columns (name, rarity, prices, etc.)
 
 After all set tabs are written, it creates/updates a **Dashboard** tab (always the first tab) showing:
 - Overall "Verbleibend" (remaining) count
@@ -386,8 +387,11 @@ node mtg-to-sheets.js --formula-sep ,
 
 Just run the script again. By default (`preserveChecks: true`) it will:
 - Re-download fresh card data from Scryfall
-- Keep all checkboxes you've ticked, matched by **set code + collector number**
+- Keep all Collected and Foiled checkboxes you've ticked, matched by **set code + collector number**
 - Reset any card not matched (e.g. newly added promos will start unchecked)
+
+Sheets created by an older version are migrated automatically: existing Collected
+checks stay intact, and the new Foiled checkboxes start unchecked.
 
 To reset all checkboxes (e.g. starting a new collection), set `preserveChecks: false` in the config or run with `--preserve-checks` omitted and the config option set to false.
 
@@ -405,9 +409,10 @@ If this happens about every seven days, open your Google Cloud project’s **Goo
 
 | Col | Content |
 |---|---|
-| A | Checkbox — tick when you own the card |
-| B | Card image (`=IMAGE(url)`) |
-| C+ | Scryfall card data: name, set, collector_number, rarity, prices (usd, eur, tix), artist, etc. |
+| A | Collected checkbox — tick when you own the card |
+| B | Foiled checkbox — tick when your copy is foil |
+| C | Card image (`=IMAGE(url)`) |
+| D+ | Scryfall card data: name, set, collector_number, rarity, prices (usd, eur, tix), artist, etc. |
 
 - Rows are sorted by collector number
 - Price columns are formatted as numbers (locale-safe)
