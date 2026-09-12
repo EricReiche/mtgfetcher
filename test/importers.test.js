@@ -250,6 +250,84 @@ test('keeps sceneImageGallery from the loaded config', () => {
   assert.deepEqual(resolveConfig({}, { spreadsheetId: 'sheet-id', sceneImageGallery: gallery }).sceneImageGallery, gallery);
 });
 
+test('parses CLI --sets with "+" merging multiple set codes into one tab', () => {
+  const { parseArgs } = require('../mtg-to-sheets.js');
+  const cli = parseArgs(['--sets', 'pspl+purl:Promos,pw26:PW26']);
+  assert.deepEqual(cli.sets, [
+    { sets: ['pspl', 'purl'], code: 'pspl', tab: 'PROMOS' },
+    { sets: ['pw26'], code: 'pw26', tab: 'PW26' },
+  ]);
+});
+
+test('parses plain --sets codes with no "+" as single-code entries', () => {
+  const { parseArgs } = require('../mtg-to-sheets.js');
+  const cli = parseArgs(['--sets', 'msh,tmsh:Tokens']);
+  assert.deepEqual(cli.sets, [
+    { sets: ['msh'], code: 'msh', tab: 'MSH' },
+    { sets: ['tmsh'], code: 'tmsh', tab: 'TOKENS' },
+  ]);
+});
+
+test('sorts combined multi-set tabs by set code then collector number', async () => {
+  const sheets = { spreadsheets: {
+    get: async () => ({ data: { sheets: [{ properties: { title: 'Promos', sheetId: 1 } }] } }),
+    values: { get: async () => ({ data: { values: [] } }), clear: async () => {}, update: async () => {} },
+    batchUpdate: async () => ({ data: { replies: [] } }),
+  } };
+  const headers = ['set', 'collector_number', 'name'];
+  const rows = [
+    { set: 'purl', collector_number: '2026-16', name: 'C' },
+    { set: 'pspl', collector_number: '2026-1', name: 'A' },
+    { set: 'pspl', collector_number: '2026-15', name: 'B' },
+    { set: 'purl', collector_number: '2026-1', name: 'D' },
+  ];
+  const updates = [];
+  sheets.spreadsheets.values.update = async req => { updates.push(req); };
+
+  await writeTab(sheets, 'sheet-id', 'Promos', headers, [...rows], null, false);
+
+  const dataRows = updates[0].requestBody.values.slice(1);
+  assert.deepEqual(dataRows.map(r => [r[3], r[4]]), [
+    ['pspl', '2026-1'],
+    ['pspl', '2026-15'],
+    ['purl', '2026-1'],
+    ['purl', '2026-16'],
+  ]);
+});
+
+test('merges per-source cards with independent collectorList filters into one tab', async () => {
+  // Simulate the main-loop source normalization + per-source filtering.
+  const entry = { tab: 'Promos', cards: [
+    { set: 'PW26', collectorList: ['1', '3'] },
+    { set: 'PSPL', collectorList: ['2'] },
+  ]};
+
+  const sources = entry.cards.map(card => ({
+    code: String(card.set ?? card.code ?? '').toLowerCase(),
+    collectorRange: card.collectorRange,
+    collectorList: card.collectorList,
+  }));
+
+  const fakeRows = {
+    pw26: [{ set: 'pw26', collector_number: '1' }, { set: 'pw26', collector_number: '2' }, { set: 'pw26', collector_number: '3' }],
+    pspl: [{ set: 'pspl', collector_number: '1' }, { set: 'pspl', collector_number: '2' }],
+  };
+
+  let rows = [];
+  for (const { code, collectorList } of sources) {
+    let setRows = fakeRows[code];
+    if (collectorList) {
+      const allowed = new Set(collectorList.map(String));
+      setRows = setRows.filter(r => allowed.has(String(r.collector_number)));
+    }
+    rows.push(...setRows);
+  }
+
+  assert.deepEqual(rows.map(r => [r.set, r.collector_number]), [
+    ['pw26', '1'], ['pw26', '3'], ['pspl', '2'],
+  ]);
+});
+
 test('lays out source image formulas three per row with safely quoted tabs', () => {
   assert.deepEqual(
     buildImageGalleryFormulas('HOB Scene Cards', 'R', 5, 3),

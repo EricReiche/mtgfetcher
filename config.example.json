@@ -15,6 +15,14 @@
       "code": "pmei", 
       "tab": "PMEI", 
       "collectorList": ["2026-4", "2026-6", "2026-13", "2026-14", "2026-15", "2026-16"]
+    },
+    {
+      "tab": "HOB Promos",
+      "cards": [
+        { "set": "PW26", "collectorList": ["14", "15", "16"] },
+        { "set": "PSPL", "collectorList": ["12"] },
+        { "set": "PURL", "collectorList": ["2026-1"] }
+      ]
     }
   ],
   "wizardsArtCards": [

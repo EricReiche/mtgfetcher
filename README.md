@@ -178,11 +178,13 @@ Place this file next to the script. All fields are optional except `spreadsheetI
 | Field | Required | Description |
 |---|---|---|
 | `code` | ✓ | Scryfall set code (lowercase), e.g. `"msh"` |
+| `sets` | — | Array of Scryfall set codes merged into a single tab, e.g. `["pspl", "purl"]`. Overrides `code` when present. |
+| `cards` | — | Array of per-source objects merged into a single tab. Overrides `code`/`sets` when present. Each object takes `set` (or `code`), `collectorRange`, and `collectorList`. |
 | `tab` | ✓ | Tab name in the spreadsheet, e.g. `"MSH"` |
-| `collectorRange` | — | `[min, max]` — only include cards with collector numbers in this numeric range |
-| `collectorList` | — | `["id1", "id2", …]` — explicit list of collector IDs (supports non-numeric IDs) |
+| `collectorRange` | — | `[min, max]` — only include cards with collector numbers in this numeric range (entry-level for `code`/`sets`, per-source for `cards`) |
+| `collectorList` | — | `["id1", "id2", …]` — explicit list of collector IDs (supports non-numeric IDs) (entry-level for `code`/`sets`, per-source for `cards`) |
 
-Both filters are optional. If both are set on the same entry, `collectorRange` is applied first, then `collectorList`.
+`code` and `sets` are mutually exclusive. When `cards` is used, each source object carries its own `set` code and optional `collectorRange`/`collectorList` filters, applied per source before merging. Filters are optional; if both are set on the same source, `collectorRange` is applied first, then `collectorList`.
 
 **Example — Special Guests, only cards 103–110 (numeric range):**
 ```json
@@ -192,6 +194,20 @@ Both filters are optional. If both are set on the same entry, `collectorRange` i
 **Example — MagicFest promos with non-numeric IDs:**
 ```json
 { "code": "pmei", "tab": "PMEI", "collectorList": ["2026-4", "2026-6", "2026-13", "2026-14", "2026-15", "2026-16"] }
+```
+
+**Example — Hobbit promos from three promo sets merged into one tab:**
+```json
+{ "tab": "HOB Promos", "cards": [
+  { "set": "PW26", "collectorList": ["14", "15", "16"] },
+  { "set": "PSPL", "collectorList": ["12"] },
+  { "set": "PURL", "collectorList": ["2026-1"] }
+] }
+```
+
+**Example — Hobbit promos from two promo sets merged into one tab (CLI-friendly):**
+```json
+{ "sets": ["pspl", "purl"], "tab": "HOB Promos", "collectorList": ["2026-1", "2026-14", "2026-15", "2026-16"] }
 ```
 
 You can find the set code and collector number for any card in its Scryfall URL:
@@ -381,9 +397,11 @@ All config values can be overridden on the command line. CLI flags take priority
 
 ```
 --spreadsheet-id <id>      Google Sheets document ID
---sets <codes>             Comma-separated set codes
+--sets <codes>             Comma-separated set codes, optionally with tab names
                            e.g.  msh,tmsh,msc
                                  msh:MSH,tmsh:Tokens
+                                 pspl+purl:Promos,pw26:PW26
+                           "+" merges multiple Scryfall set codes into one tab
 --config <path>            Use a different config file (default: mtg-config.json)
 --credentials <path>       OAuth credentials file (default: credentials.json)
 --image-col <name>         Scryfall data column for the image URL

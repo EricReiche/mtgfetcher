@@ -15,25 +15,38 @@
  * ── CONFIG ─────────────────────────────────────────────────────────────────
  *   Three ways to configure (highest priority first):
  *
- *   1. CLI flags:
- *        --spreadsheet-id  <id>
- *        --sets            msh,tmsh,msc          (codes only, tab = uppercased code)
- *        --sets            msh:MSH,tmsh:Tokens   (code:TabName pairs)
- *        --config          path/to/config.json   (load a different config file)
- *        --credentials     path/to/creds.json
- *        --image-col       image_uris            (override auto-detected image column)
- *        --preserve-checks                       keep existing checkboxes (matched by set+collector_number)
- *
- *   2. Config file  (mtg-config.json by default, override with --config):
- *        {
- *          "spreadsheetId": "1BxiM...",
- *          "sets": [
- *            { "code": "msh",  "tab": "MSH"  },
- *            { "code": "tmsh", "tab": "TMSH" }
- *          ],
- *          "credentialsPath": "credentials.json",
- *          "imageCol": null
- *        }
+*   1. CLI flags:
+*        --spreadsheet-id  <id>
+*        --sets            msh,tmsh,msc          (codes only, tab = uppercased code)
+*        --sets            msh:MSH,tmsh:Tokens   (code:TabName pairs)
+*        --sets            pspl+purl:Promos      (+ merges multiple set codes into one tab)
+*        --config          path/to/config.json   (load a different config file)
+*        --credentials     path/to/creds.json
+*        --image-col       image_uris            (override auto-detected image column)
+*        --preserve-checks                       keep existing checkboxes (matched by set+collector_number)
+*
+*   2. Config file  (mtg-config.json by default, override with --config):
+*        {
+*          "spreadsheetId": "1BxiM...",
+*          "sets": [
+*            { "code": "msh",  "tab": "MSH"  },
+*            { "code": "tmsh", "tab": "TMSH" },
+*            { "sets": ["pspl", "purl"], "tab": "HOB Promos" },
+*            { "tab": "PW26", "cards": [
+*                { "set": "PW26", "collectorList": ["14","15","16"] },
+*                { "set": "PSPL", "collectorList": ["12"] },
+*                { "set": "PURL", "collectorList": ["2026-1"] }
+*              ]},
+*            { "code": "pw26", "tab": "PW26", "collectorRange": [14, 16] }
+*          ],
+*          "credentialsPath": "credentials.json",
+*          "imageCol": null
+*        }
+*
+*        Each set entry may use one of three forms:
+*        - "code" (single Scryfall set code) with optional entry-level filters
+*        - "sets" (array of codes merged into one tab) with optional entry-level filters
+*        - "cards" (array of per-source objects, each with its own set code and filters)
  *
  *   3. Hardcoded defaults inside this file (see DEFAULTS below).
  *
@@ -88,9 +101,11 @@ function parseArgs(argv) {
       case '--formula-sep':     result.formulaSep        = next; i++; break;
       case '--sets':
         // accepts:  "msh,tmsh,msc"  or  "msh:MSH,tmsh:Tokens"
+        //           "pspl+purl:Promos,pw26:PW26"  (+ separates multiple set codes per tab)
         result.sets = next.split(',').map(entry => {
-          const [code, tab] = entry.split(':');
-          return { code: code.trim().toLowerCase(), tab: (tab ?? code).trim().toUpperCase() };
+          const [codePart, tab] = entry.split(':');
+          const codes = codePart.split('+').map(c => c.trim().toLowerCase()).filter(Boolean);
+          return { sets: codes, code: codes[0], tab: (tab ?? codes[0]).trim().toUpperCase() };
         });
         i++;
         break;
@@ -110,7 +125,9 @@ Options:
   --spreadsheet-id <id>      Google Sheets document ID (from URL)
   --sets <codes>             Comma-separated set codes, optionally with tab names
                              e.g.  msh,tmsh,msc
-                                   msh:MSH,tmsh:Tokens,msc:Commander
+                                   msh:MSH,tmsh:Tokens
+                                   pspl+purl:Promos,pw26:PW26
+                             "+" merges multiple Scryfall set codes into one tab
   --config <path>            Path to JSON config file  (default: mtg-config.json)
   --credentials <path>       Path to OAuth credentials file  (default: credentials.json)
   --image-col <name>         Scryfall CSV column for the image URL  (default: auto-detect)
@@ -124,7 +141,9 @@ Config file format (mtg-config.json):
     "imageCol": null,
     "sets": [
       { "code": "msh",  "tab": "MSH"  },
-      { "code": "tmsh", "tab": "TMSH" }
+      { "code": "tmsh", "tab": "TMSH" },
+      { "sets": ["pspl", "purl"], "tab": "HOB Promos" },
+      { "code": "pw26", "tab": "PW26", "collectorRange": [14, 16] }
     ]
   }
 `);
@@ -718,9 +737,13 @@ async function writeTab(sheets, spreadsheetId, tabName, csvHeaders, rows, imageC
     sheetId = res.data.replies[0].addSheet.properties.sheetId;
   }
 
-  // Sort by collector_number — numeric-aware so "10" sorts after "9", not "1"
-  // Falls back to locale string compare for non-numeric suffixes like "1a", "★2"
+  // Sort by set then collector_number — numeric-aware so "10" sorts after "9", not "1"
+  // Falls back to locale string compare for non-numeric suffixes like "1a", "★2".
+  // Sorting by set first keeps multi-set tabs grouped per set.
   rows.sort((a, b) => {
+    const setA = String(a['set'] ?? '').toLowerCase();
+    const setB = String(b['set'] ?? '').toLowerCase();
+    if (setA !== setB) return setA.localeCompare(setB);
     const na = parseInt(a.collector_number, 10);
     const nb = parseInt(b.collector_number, 10);
     if (!isNaN(na) && !isNaN(nb) && na !== nb) return na - nb;
@@ -1088,46 +1111,80 @@ async function main() {
   const tabImports  = new Map(); // tab → current headers/row count for optional galleries
   let   sharedHeaders = null; // CSV headers (same for all Scryfall tabs)
 
-  for (const { code, tab, collectorRange, collectorList } of cfg.sets) {
-    console.log(`[${tab}] Fetching set:${code}…`);
-    let { headers, rows } = await fetchSet(code);
+  for (const entry of cfg.sets) {
+    const { tab } = entry;
+
+    // Normalize the entry into a list of { code, collectorList, collectorRange } sources.
+    //
+    //   { "code": "hob", "tab": "HOB" }
+    //   { "sets": ["pspl","purl"], "tab": "HOB Promos", "collectorList": ["2026-1"] }
+    //   { "tab": "PW26", "cards": [
+    //       { "set": "PW26", "collectorList": ["14","15","16"] },
+    //       { "set": "PSPL", "collectorList": ["12"] },
+    //       { "set": "PURL", "collectorList": ["2026-1"] }
+    //   ]}
+    let sources;
+    if (Array.isArray(entry.cards)) {
+      sources = entry.cards.map(card => ({
+        code:            String(card.set ?? card.code ?? '').toLowerCase(),
+        collectorRange:  card.collectorRange,
+        collectorList:   card.collectorList,
+      }));
+    } else {
+      const codes = Array.isArray(entry.sets) ? entry.sets
+               : Array.isArray(entry.code) ? entry.code
+               : [entry.code];
+      sources = codes.map(code => ({
+        code,
+        collectorRange:  entry.collectorRange,
+        collectorList:   entry.collectorList,
+      }));
+    }
+
+    let headers = null;
+    let rows = [];
+
+    for (const { code, collectorRange, collectorList } of sources) {
+      console.log(`[${tab}] Fetching set:${code}…`);
+      const setRes = await fetchSet(code);
+      if (!headers) headers = setRes.headers;
+      let setRows = setRes.rows;
+      const before = setRows.length;
+
+      // Filter by numeric range  e.g. collectorRange: [103, 110]
+      if (collectorRange) {
+        const [min, max] = collectorRange;
+        setRows = setRows.filter(r => {
+          const n = parseInt(r.collector_number, 10);
+          return !isNaN(n) && n >= min && n <= max;
+        });
+        console.log(`  Filtered to collector #${min}–${max}: ${setRows.length}/${before} cards`);
+      }
+
+      // Filter by explicit ID list  e.g. collectorList: ["2026-4", "2026-6", "2026-13"]
+      // IDs are matched as strings, so works for numeric and non-numeric collector numbers.
+      if (collectorList) {
+        const allowed = new Set(collectorList.map(String));
+        const beforeList = setRows.length;
+        setRows = setRows.filter(r => allowed.has(String(r.collector_number)));
+        console.log(`  Filtered to ${allowed.size} listed IDs: ${setRows.length}/${beforeList} matched`);
+      }
+
+      if (setRows.length === 0) {
+        console.log(`  No cards for set:${code} in "${tab}" — skipping that source.`);
+        continue;
+      }
+      rows.push(...setRows);
+    }
 
     if (rows.length === 0) {
       console.log(`  Skipping "${tab}" — no cards returned.\n`);
       continue;
     }
 
-    // Filter by numeric range  e.g. collectorRange: [103, 110]
-    if (collectorRange) {
-      const [min, max] = collectorRange;
-      const before = rows.length;
-      rows = rows.filter(r => {
-        const n = parseInt(r.collector_number, 10);
-        return !isNaN(n) && n >= min && n <= max;
-      });
-      console.log(`  Filtered to collector #${min}–${max}: ${rows.length}/${before} cards`);
-      if (rows.length === 0) {
-        console.log(`  Skipping "${tab}" — no cards in range.\n`);
-        continue;
-      }
-    }
-
-    // Filter by explicit ID list  e.g. collectorList: ["2026-4", "2026-6", "2026-13"]
-    // IDs are matched as strings, so works for numeric and non-numeric collector numbers.
-    if (collectorList) {
-      const allowed = new Set(collectorList.map(String));
-      const before = rows.length;
-      rows = rows.filter(r => allowed.has(String(r.collector_number)));
-      console.log(`  Filtered to ${allowed.size} listed IDs: ${rows.length}/${before} matched`);
-      if (rows.length === 0) {
-        console.log(`  Skipping "${tab}" — none of the listed collector IDs found.\n`);
-        continue;
-      }
-    }
-
     console.log(`  ${rows.length} total cards. Writing…`);
     await writeTab(sheets, cfg.spreadsheetId, tab, headers, rows, cfg.imageCol, cfg.preserveChecks);
-    doneSets.push({ code, tab });
+    doneSets.push({ code: sources.map(s => s.code).join(','), tab });
     tabImports.set(tab, { headers, rowCount: rows.length });
     if (!sharedHeaders) sharedHeaders = headers;
     console.log('');
@@ -1178,4 +1235,5 @@ module.exports = {
   authorize, isInvalidGrantError, extractAuthCode, resolveConfig, scryfallCardToRow, parseWizardsArtCards,
   wizardsCardToRow, quoteSheetTab, buildImageGalleryFormulas, extractWizardsContentfulToken, checkboxKey, readCheckboxMap, writeTab,
   enrichWizardsArtCardPrices, cardmarketFeedKey, getCachedCardmarketFeed, fetchSet, fetchWizardsArtCards,
+  parseArgs,
 };
