@@ -148,6 +148,14 @@ Place this file next to the script. All fields are optional except `spreadsheetI
         "priceField": "trend"
       }
     }
+  ],
+  "wizardsPromoCards": [
+    {
+      "url": "https://magic.wizards.com/en/products/the-hobbit/card-image-gallery?cigquery=Promo",
+      "tab": "HOB Event Promos",
+      "code": "HOB-EVENT-PROMO",
+      "entryIds": ["3ZxLpAcaZh6ignwcuW5hMY", "1Y4rmeP3bQixgJovNw1WYU", "3Pq2lrdSRuvNbZoWpg8tTu", "6tLQIKSatfDGqnjcYkBfBC", "7hGxR73493LTYGoMlpGs98"]
+    }
   ]
 }
 ```
@@ -163,6 +171,7 @@ Place this file next to the script. All fields are optional except `spreadsheetI
 | `formulaSep` | `;` | Formula argument separator — `;` for German/EU locale, `,` for US |
 | `imageCol` | auto-detect | Scryfall data column containing the card image URL |
 | `wizardsArtCards` | `[]` | Optional official Wizards gallery imports (see below) |
+| `wizardsPromoCards` | `[]` | Optional exact official Wizards promo imports (see below) |
 
 ### Set entries
 
@@ -282,6 +291,21 @@ same Scryfall-derived header order as every normal set tab; source-specific
 fields that Wizards does not publish are left blank. That makes a future
 Scryfall Art Card import a drop-in source replacement without changing the
 sheet layout.
+
+#### Official Wizards promo cards
+
+`wizardsPromoCards` imports specific promo printings from the official Wizards
+Card Image Gallery. Give it the gallery URL and the exact
+Contentful entry IDs from that gallery; this avoids selecting similarly named
+base-set printings. Each entry creates a row using Wizards' official name,
+collector number, artist, and image URL.
+
+| Field | Required | Description |
+|---|---|---|
+| `url` | ✓ | Official Wizards Card Image Gallery URL |
+| `tab` | ✓ | Target sheet tab |
+| `entryIds` | ✓ | Gallery entry IDs for the exact promo printings to import |
+| `code` | — | Stable source code used to preserve checkboxes; default: `WIZARDS-PROMO` |
 
 ### Complete Hobbit configuration
 
