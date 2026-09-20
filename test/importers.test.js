@@ -144,7 +144,7 @@ test('keeps non-numeric collector numbers as text in Dashboard results', async (
     ['set', 'collector_number', 'name', 'foil_available'], ';');
 
   const formula = writes[0].requestBody.data[0].values[0][0];
-  assert.match(formula, /TO_TEXT\('LTC'!E2:E\)/);
+  assert.match(formula, /ARRAYFORMULA\(TO_TEXT\('LTC'!E2:E\)\)/);
   assert.match(formula, /SELECT Col1,Col2 WHERE Col3 = FALSE/);
 });
 

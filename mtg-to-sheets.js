@@ -1164,7 +1164,7 @@ async function createDashboard(sheets, spreadsheetId, sets, csvHeaders, sep, das
   // such as "386z" into blanks. Build a small virtual table and force that
   // display column to text before QUERY sees it.
   const sheetRef = tab => quoteSheetTab(tab);
-  const dashboardData = tab => `HSTACK(${sheetRef(tab)}!${nameCol}2:${nameCol}${S}TO_TEXT(${sheetRef(tab)}!${numCol}2:${numCol})${S}${sheetRef(tab)}!A2:A${S}${sheetRef(tab)}!B2:B${S}${sheetRef(tab)}!${foilAvailableCol}2:${foilAvailableCol})`;
+  const dashboardData = tab => `HSTACK(${sheetRef(tab)}!${nameCol}2:${nameCol}${S}ARRAYFORMULA(TO_TEXT(${sheetRef(tab)}!${numCol}2:${numCol}))${S}${sheetRef(tab)}!A2:A${S}${sheetRef(tab)}!B2:B${S}${sheetRef(tab)}!${foilAvailableCol}2:${foilAvailableCol})`;
   const missingQuery  = tab => `QUERY(${dashboardData(tab)}${S}"SELECT Col1,Col2 WHERE Col3 = FALSE"${S}0)`;
   const foilQuery     = tab => `QUERY(${dashboardData(tab)}${S}"SELECT Col1,Col2 WHERE Col4 = FALSE AND Col5 = TRUE"${S}0)`;
   const selectedQuery = tab => `=IF($A$2="Need foil"${S}${foilQuery(tab)}${S}${missingQuery(tab)})`;
