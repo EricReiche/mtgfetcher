@@ -172,6 +172,8 @@ Place this file next to the script. All fields are optional except `spreadsheetI
 | `imageCol` | auto-detect | Scryfall data column containing the card image URL |
 | `wizardsArtCards` | `[]` | Optional official Wizards gallery imports (see below) |
 | `wizardsPromoCards` | `[]` | Optional exact official Wizards promo imports (see below) |
+| `dashboard.color` | existing purple/rose theme | One `#RRGGBB` background color for the Dashboard title, Dashboard set headers, and every imported card-tab header |
+| `bulkMarkCollected` | `[]` | One-time exact deck-printing imports from MTGJSON (see below) |
 
 ### Set entries
 
@@ -204,6 +206,27 @@ Place this file next to the script. All fields are optional except `spreadsheetI
   { "set": "PURL", "collectorList": ["2026-1"] }
 ] }
 ```
+
+### One-time bulk collection marking
+
+Use MTGJSON's per-deck files to mark the exact collector-number printings from
+sealed decks. The importer marks only each deck's playable commander and main
+board; it excludes the oversized display commander. Remove this configuration
+after the run if you want it to be explicitly one-time.
+
+```json
+"bulkMarkCollected": [{
+  "tab": "LTC",
+  "tabs": { "LTC": "LTC", "LTR": "LTR" },
+  "deckUrls": [
+    "https://mtgjson.com/api/v5/decks/RidersOfRohan_LTC.json"
+  ]
+}]
+```
+
+`tabs` optionally maps a deck card's actual set code to a different imported
+tab. This is useful when a Commander deck contains both `LTC` and `LTR`
+printings.
 
 **Example — Hobbit promos from two promo sets merged into one tab (CLI-friendly):**
 ```json
@@ -310,17 +333,18 @@ sheet layout.
 
 #### Official Wizards promo cards
 
-`wizardsPromoCards` imports specific promo printings from the official Wizards
-Card Image Gallery. Give it the gallery URL and the exact
-Contentful entry IDs from that gallery; this avoids selecting similarly named
-base-set printings. Each entry creates a row using Wizards' official name,
-collector number, artist, and image URL.
+`wizardsPromoCards` imports promo printings from the official Wizards Card
+Image Gallery. The `cigproduct` filters in the gallery URL are honored, so a
+filtered Wizards search URL is enough. Optionally supply exact Contentful
+entry IDs to further restrict the result and avoid similarly named printings.
+Each entry creates a row using Wizards' official name, collector number,
+artist, and image URL.
 
 | Field | Required | Description |
 |---|---|---|
 | `url` | ✓ | Official Wizards Card Image Gallery URL |
 | `tab` | ✓ | Target sheet tab |
-| `entryIds` | ✓ | Gallery entry IDs for the exact promo printings to import |
+| `entryIds` | — | Optional gallery entry IDs for an exact subset of the URL result |
 | `code` | — | Stable source code used to preserve checkboxes; default: `WIZARDS-PROMO` |
 
 ### Complete Hobbit configuration
@@ -432,6 +456,9 @@ Just run the script again. By default (`preserveChecks: true`) it will:
 - Keep all Collected and Foiled checkboxes you've ticked, matched by **set code + collector number**
 - Keep any user-edited `lang` values, even when `preserveChecks` is disabled
 - Reset any card not matched (e.g. newly added promos will start unchecked)
+
+Card rows are highlighted automatically: pale green for Collected and pale
+yellow for Foiled (yellow takes precedence when both boxes are checked).
 
 Sheets created by an older version are migrated automatically: existing Collected
 checks stay intact, and the new Foiled checkboxes start unchecked.

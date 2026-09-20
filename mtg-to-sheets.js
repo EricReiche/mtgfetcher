@@ -75,6 +75,9 @@ const DEFAULTS = {
   preserveChecks:  true,              // keep checkboxes on re-run by default
   formulaSep:      ';',               // formula argument separator — ';' for German/EU, ',' for US locale
   wizardsArtCards: [],                // optional official Wizards art-card gallery imports
+  wizardsPromoCards: [],              // optional official Wizards promo gallery imports
+  bulkMarkCollected: [],              // optional one-time MTGJSON deck-list imports
+  dashboard: {},
   sets: [
     { code: 'msh',  tab: 'MSH'  },
     { code: 'tmsh', tab: 'TMSH' },
@@ -162,6 +165,9 @@ function resolveConfig(cli, fileConf) {
     preserveChecks:  cli.preserveChecks   ?? fileConf.preserveChecks   ?? DEFAULTS.preserveChecks,
     formulaSep:      cli.formulaSep       ?? fileConf.formulaSep       ?? DEFAULTS.formulaSep,
     wizardsArtCards: fileConf.wizardsArtCards ?? DEFAULTS.wizardsArtCards,
+    wizardsPromoCards: fileConf.wizardsPromoCards ?? DEFAULTS.wizardsPromoCards,
+    bulkMarkCollected: fileConf.bulkMarkCollected ?? DEFAULTS.bulkMarkCollected,
+    dashboard: fileConf.dashboard ?? DEFAULTS.dashboard,
     sceneImageGallery: fileConf.sceneImageGallery ?? null,
   };
 }
@@ -337,8 +343,21 @@ const PAGE_DELAY_MS  = 550;  // slightly over 500ms to be safe
 const RETRY_DELAY_MS = 30_000;
 const MAX_RETRIES    = 3;
 
-async function fetchSet(code) {
-  let url = `https://api.scryfall.com/cards/search?q=set:${code}&unique=prints&include_extras=true&format=json&page=1`;
+function buildSetSearchQuery(code, collectorList = null) {
+  const setQuery = `set:${code}`;
+  if (!collectorList?.length) return setQuery;
+  const collectorTerms = collectorList.map(number => {
+    // Quotes make non-numeric collector numbers such as "399s" and
+    // "2026-1" exact Scryfall search terms rather than partial tokens.
+    const escaped = String(number).replaceAll('\\', '\\\\').replaceAll('"', '\\"');
+    return `cn:"${escaped}"`;
+  });
+  return `${setQuery} (${collectorTerms.join(' or ')})`;
+}
+
+async function fetchSet(code, collectorList = null) {
+  const query = buildSetSearchQuery(code, collectorList);
+  let url = `https://api.scryfall.com/cards/search?q=${encodeURIComponent(query)}&unique=prints&include_extras=true&format=json&page=1`;
   let allRows = [];
   let page = 1;
 
@@ -384,6 +403,34 @@ async function fetchSet(code) {
   }
 
   return { headers: SCRYFALL_HEADERS, rows: allRows };
+}
+
+async function loadBulkMarkCollected(entries = []) {
+  const keysByTab = new Map();
+  for (const entry of entries) {
+    const { tab, deckUrls = [], tabs = {} } = entry;
+    if (!tab || !deckUrls.length)
+      throw new Error('Each bulkMarkCollected entry needs tab and deckUrls');
+    console.log(`[${tab}] Downloading exact deck contents from MTGJSON…`);
+    for (const url of deckUrls) {
+      const response = await httpGet(url);
+      if (response.status !== 200) throw new Error(`Could not download MTGJSON deck list (HTTP ${response.status})`);
+      const deck = JSON.parse(response.body).data;
+      // displayCommander is a separate oversized display card, not a playable
+      // deck card, so only mark the actual commander and main deck contents.
+      for (const card of [...(deck.commander ?? []), ...(deck.mainBoard ?? [])]) {
+        if (!card?.setCode || !card.number)
+          throw new Error(`MTGJSON deck "${deck.name ?? url}" contained an incomplete card record`);
+        const targetTab = tabs[String(card.setCode).toUpperCase()] ?? tab;
+        const keys = keysByTab.get(targetTab) ?? new Set();
+        keys.add(checkboxKey(card.setCode, card.number));
+        keysByTab.set(targetTab, keys);
+      }
+    }
+    const markedCount = [...keysByTab.values()].reduce((total, keys) => total + keys.size, 0);
+    console.log(`  Loaded ${markedCount} exact card printings from ${deckUrls.length} deck(s)`);
+  }
+  return keysByTab;
 }
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
@@ -453,6 +500,38 @@ function wizardsCardToRow({ code, collector_number, entryId, fallbackName, detai
     image_uri: details.face,
     scryfall_uri: '',
     scryfall_id: `wizards:${entryId}`,
+  };
+}
+
+// The gallery's server-rendered list contains every card. Product filters in
+// its URL are applied client-side, so apply them after loading card details.
+function parseWizardsGalleryCards(cardListBody) {
+  return cardListBody.split('\n').flatMap(line => {
+    const match = line.match(/^(.*?) \[([^\]]+)]$/);
+    return match ? [{ name: match[1], entryId: match[2] }] : [];
+  });
+}
+
+function kebabCase(value) {
+  return String(value ?? '')
+    .replace(/([a-z0-9])([A-Z])/g, '$1-$2')
+    .replace(/[^a-zA-Z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .toLowerCase();
+}
+
+function wizardsPromoCardToRow({ code, entryId, fallbackName, details, linkedEntries }) {
+  const typeLine = (details.type ?? [])
+    .map(link => linkedEntries.get(link.sys?.id)?.label ?? '')
+    .filter(Boolean).join(' ');
+  return {
+    multiverse_id: '', mtgo_id: '', set: code,
+    collector_number: stringValue(details.collectorNumber), lang: 'en',
+    rarity: stringValue(details.rarity), name: stringValue(details.name ?? fallbackName),
+    mana_cost: stringValue(details.manaCost), cmc: stringValue(details.convertedManaCost),
+    type_line: typeLine, artist: stringValue(details.artist),
+    usd_price: '', usd_foil_price: '', eur_price: '', tix_price: '',
+    image_uri: stringValue(details.face), scryfall_uri: '', scryfall_id: `wizards:${entryId}`,
   };
 }
 
@@ -603,6 +682,48 @@ async function fetchWizardsArtCards({
   return { headers: WIZARDS_ART_HEADERS, rows };
 }
 
+async function fetchWizardsPromoCards({ url, tab, code = 'WIZARDS-PROMO', entryIds = null }) {
+  if (!url || !tab) throw new Error('Each wizardsPromoCards entry needs both "url" and "tab"');
+  const gallery = await httpGet(url);
+  if (gallery.status !== 200) throw new Error(`Could not load Wizards gallery (HTTP ${gallery.status})`);
+
+  const selectedProducts = new Set(new URL(url).searchParams.getAll('cigproduct'));
+  const allCards = parseWizardsGalleryCards(extractWizardsCardList(gallery.body));
+  const requestedIds = entryIds ? new Set(entryIds.map(String)) : null;
+  const cards = requestedIds ? allCards.filter(card => requestedIds.has(card.entryId)) : allCards;
+  if (!cards.length) throw new Error('Wizards gallery did not contain any requested promo cards');
+
+  const token = await getWizardsContentfulToken(gallery.body);
+  const entries = new Map();
+  const linkedEntries = new Map();
+  for (let start = 0; start < cards.length; start += 100) {
+    const ids = cards.slice(start, start + 100).map(card => card.entryId).join(',');
+    const endpoint = new URL('https://cdn.contentful.com/spaces/s5n2t79q9icq/environments/master/entries');
+    endpoint.search = new URLSearchParams({
+      access_token: token, content_type: 'magicCard', 'sys.id[in]': ids,
+      locale: 'en', limit: '100', include: '1',
+    }).toString();
+    const response = await httpGet(endpoint.toString());
+    if (response.status !== 200) throw new Error(`Could not load Wizards promo details (HTTP ${response.status})`);
+    const payload = JSON.parse(response.body);
+    for (const entry of payload.items ?? []) entries.set(entry.sys.id, entry.fields);
+    for (const entry of payload.includes?.Entry ?? []) linkedEntries.set(entry.sys.id, entry.fields);
+  }
+
+  const rows = cards.flatMap(card => {
+    const details = entries.get(card.entryId);
+    if (!details?.face || !details.collectorNumber) return [];
+    if (selectedProducts.size) {
+      const products = (details.foundInProducts ?? [])
+        .map(link => kebabCase(linkedEntries.get(link.sys?.id)?.entryTitle));
+      if (!products.some(product => selectedProducts.has(product))) return [];
+    }
+    return [wizardsPromoCardToRow({ code, entryId: card.entryId, fallbackName: card.name, details, linkedEntries })];
+  });
+  if (!rows.length) throw new Error('Wizards gallery URL filters did not match any promo cards');
+  return { headers: WIZARDS_ART_HEADERS, rows };
+}
+
 // ── SHEETS HELPERS ────────────────────────────────────────────────────────────
 
 function colLetter(idx) {
@@ -687,7 +808,11 @@ async function readCheckboxMap(sheets, spreadsheetId, tabName) {
   if (!headerRow) return new Map();
 
   const colIdx = name => headerRow.indexOf(name);
-  const collectedCol = colIdx('Collected');
+  // Legacy sheets used an unlabeled checkbox column before the "Karte" image
+  // column. Recognize it so their TRUE values survive the first migration.
+  const collectedCol = colIdx('Collected') >= 0
+    ? colIdx('Collected')
+    : (headerRow[0] === '' && headerRow[1] === 'Karte' ? 0 : -1);
   const foiledCol    = colIdx('Foiled');
   const langCol      = colIdx('lang');
   const setCol   = colIdx('set');
@@ -712,7 +837,7 @@ async function readCheckboxMap(sheets, spreadsheetId, tabName) {
 
 // ── WRITE ONE TAB ─────────────────────────────────────────────────────────────
 
-async function writeTab(sheets, spreadsheetId, tabName, csvHeaders, rows, imageColOverride, preserveChecks) {
+async function writeTab(sheets, spreadsheetId, tabName, csvHeaders, rows, imageColOverride, preserveChecks, bulkCollectedKeys = new Set(), headerColor = null) {
   // Snapshot existing checkbox and language values before we clear anything.
   // Language is always preserved; preserveChecks only controls the checkboxes.
   const preservedMap = await readCheckboxMap(sheets, spreadsheetId, tabName);
@@ -763,7 +888,7 @@ async function writeTab(sheets, spreadsheetId, tabName, csvHeaders, rows, imageC
   const dataRows = rows.map(row => {
     const key = checkboxKey(row['set'], row['collector_number']);
     const state = preservedMap.get(key);
-    const collected = preserveChecks && Boolean(state?.collected);
+    const collected = bulkCollectedKeys.has(key) || (preserveChecks && Boolean(state?.collected));
     const foiled = preserveChecks && Boolean(state?.foiled);
     const values = csvHeaders.map(header => {
       const value = header === 'lang' && state && Object.hasOwn(state, 'lang')
@@ -803,8 +928,26 @@ async function writeTab(sheets, spreadsheetId, tabName, csvHeaders, rows, imageC
 
   const dataRange    = { sheetId, startRowIndex: 1, endRowIndex: numRows + 1 };
   const checkColRange = { ...dataRange, startColumnIndex: 0, endColumnIndex: 2 };
+  const cardRowRange = { ...dataRange, startColumnIndex: 0, endColumnIndex: numCols };
 
+  // Re-runs replace our two rules instead of accumulating duplicate rules.
+  // Match the exact formula and row-wide range so unrelated user rules remain.
+  const generatedRuleIndices = (existing?.conditionalFormats ?? [])
+    .map((rule, index) => ({ rule, index }))
+    .filter(({ rule }) => {
+      const formula = rule.booleanRule?.condition?.values?.[0]?.userEnteredValue;
+      const range = rule.ranges?.[0];
+      return rule.ranges?.length === 1
+        && range?.startRowIndex === 1 && range?.startColumnIndex === 0
+        && (formula === '=$A2=TRUE' || formula === '=$B2=TRUE');
+    })
+    .map(({ index }) => index)
+    .sort((a, b) => b - a);
+
+  const headerFormat = { textFormat: { bold: true } };
+  if (headerColor) headerFormat.backgroundColor = hexColor(headerColor);
   const requests = [
+    ...generatedRuleIndices.map(index => ({ deleteConditionalFormatRule: { sheetId, index } })),
     // Freeze header row
     {
       updateSheetProperties: {
@@ -816,8 +959,8 @@ async function writeTab(sheets, spreadsheetId, tabName, csvHeaders, rows, imageC
     {
       repeatCell: {
         range: { sheetId, startRowIndex: 0, endRowIndex: 1, startColumnIndex: 0, endColumnIndex: numCols },
-        cell: { userEnteredFormat: { textFormat: { bold: true } } },
-        fields: 'userEnteredFormat.textFormat.bold',
+        cell: { userEnteredFormat: headerFormat },
+        fields: 'userEnteredFormat(textFormat.bold,backgroundColor)',
       },
     },
     // Checkbox validation on cols A:B
@@ -876,6 +1019,25 @@ async function writeTab(sheets, spreadsheetId, tabName, csvHeaders, rows, imageC
       },
     });
   }
+
+  // Foiled is inserted first so its yellow state takes precedence for cards
+  // that are both owned and marked as foil.
+  requests.push(
+    { addConditionalFormatRule: {
+        rule: { ranges: [cardRowRange], booleanRule: {
+          condition: { type: 'CUSTOM_FORMULA', values: [{ userEnteredValue: '=$B2=TRUE' }] },
+          format: { backgroundColor: { red: 1.0, green: 0.97, blue: 0.80 } },
+        } },
+        index: 0,
+    }},
+    { addConditionalFormatRule: {
+        rule: { ranges: [cardRowRange], booleanRule: {
+          condition: { type: 'CUSTOM_FORMULA', values: [{ userEnteredValue: '=$A2=TRUE' }] },
+          format: { backgroundColor: { red: 0.90, green: 0.97, blue: 0.90 } },
+        } },
+        index: 1,
+    }},
+  );
 
   await sheets.spreadsheets.batchUpdate({ spreadsheetId, requestBody: { requests } });
 
@@ -945,7 +1107,18 @@ async function createImageGallery(sheets, spreadsheetId, {
 //   Row 3 │ MSH: 12/453  │     │ TMSH: 3/27  │     │ …
 //   Row 4+ │ <card name>  │ <#> │ <card name> │ <#> │ …   ← QUERY results
 
-async function createDashboard(sheets, spreadsheetId, sets, csvHeaders, sep) {
+function hexColor(value) {
+  const match = String(value ?? '').match(/^#?([0-9a-f]{6})$/i);
+  if (!match) throw new Error(`Dashboard color must be a 6-digit hex value, got "${value}"`);
+  const hex = match[1];
+  return {
+    red: parseInt(hex.slice(0, 2), 16) / 255,
+    green: parseInt(hex.slice(2, 4), 16) / 255,
+    blue: parseInt(hex.slice(4, 6), 16) / 255,
+  };
+}
+
+async function createDashboard(sheets, spreadsheetId, sets, csvHeaders, sep, dashboard = {}) {
   console.log('\nBuilding Dashboard…');
 
   const nameIdx = csvHeaders.indexOf('name');
@@ -1028,8 +1201,9 @@ async function createDashboard(sheets, spreadsheetId, sets, csvHeaders, sep) {
   });
 
   // ── Formatting ───────────────────────────────────────────────────────────────
-  const titleBg  = { red: 0.18, green: 0.09, blue: 0.38 }; // deep purple
-  const headerBg = { red: 0.62, green: 0.24, blue: 0.44 }; // rose
+  const configuredColor = dashboard.color ? hexColor(dashboard.color) : null;
+  const titleBg  = configuredColor ?? { red: 0.18, green: 0.09, blue: 0.38 }; // deep purple
+  const headerBg = configuredColor ?? { red: 0.62, green: 0.24, blue: 0.44 }; // rose
   const white    = { red: 1, green: 1, blue: 1 };
 
   const fullRow  = (r0, r1) => ({ sheetId, startRowIndex: r0, endRowIndex: r1, startColumnIndex: 0, endColumnIndex: totalCols });
@@ -1106,6 +1280,7 @@ async function main() {
 
   const auth   = await authorize(cfg.credentialsPath, cfg.tokenPath);
   const sheets = google.sheets({ version: 'v4', auth });
+  const bulkCollectedByTab = await loadBulkMarkCollected(cfg.bulkMarkCollected);
 
   const doneSets    = [];   // sets successfully written
   const tabImports  = new Map(); // tab → current headers/row count for optional galleries
@@ -1145,8 +1320,9 @@ async function main() {
     let rows = [];
 
     for (const { code, collectorRange, collectorList } of sources) {
-      console.log(`[${tab}] Fetching set:${code}…`);
-      const setRes = await fetchSet(code);
+      const requested = collectorList?.length ? ` (${collectorList.length} requested collector numbers)` : '';
+      console.log(`[${tab}] Fetching set:${code}${requested}…`);
+      const setRes = await fetchSet(code, collectorList);
       if (!headers) headers = setRes.headers;
       let setRows = setRes.rows;
       const before = setRows.length;
@@ -1183,7 +1359,8 @@ async function main() {
     }
 
     console.log(`  ${rows.length} total cards. Writing…`);
-    await writeTab(sheets, cfg.spreadsheetId, tab, headers, rows, cfg.imageCol, cfg.preserveChecks);
+    await writeTab(sheets, cfg.spreadsheetId, tab, headers, rows, cfg.imageCol, cfg.preserveChecks,
+      bulkCollectedByTab.get(tab), cfg.dashboard.color);
     doneSets.push({ code: sources.map(s => s.code).join(','), tab });
     tabImports.set(tab, { headers, rowCount: rows.length });
     if (!sharedHeaders) sharedHeaders = headers;
@@ -1204,9 +1381,22 @@ async function main() {
     console.log(`[${artConfig.tab}] Fetching official Wizards Art Cards…`);
     const { headers, rows } = await fetchWizardsArtCards(artConfig, cardmarketData);
     console.log(`  ${rows.length} total Art Cards. Writing…`);
-    await writeTab(sheets, cfg.spreadsheetId, artConfig.tab, headers, rows, cfg.imageCol, cfg.preserveChecks);
+    await writeTab(sheets, cfg.spreadsheetId, artConfig.tab, headers, rows, cfg.imageCol, cfg.preserveChecks,
+      bulkCollectedByTab.get(artConfig.tab), cfg.dashboard.color);
     doneSets.push({ code: artConfig.code ?? 'WIZARDS-ART', tab: artConfig.tab });
     tabImports.set(artConfig.tab, { headers, rowCount: rows.length });
+    if (!sharedHeaders) sharedHeaders = headers;
+    console.log('');
+  }
+
+  for (const promoConfig of cfg.wizardsPromoCards) {
+    console.log(`[${promoConfig.tab}] Fetching official Wizards promo cards…`);
+    const { headers, rows } = await fetchWizardsPromoCards(promoConfig);
+    console.log(`  ${rows.length} total promo cards. Writing…`);
+    await writeTab(sheets, cfg.spreadsheetId, promoConfig.tab, headers, rows, cfg.imageCol, cfg.preserveChecks,
+      bulkCollectedByTab.get(promoConfig.tab), cfg.dashboard.color);
+    doneSets.push({ code: promoConfig.code ?? 'WIZARDS-PROMO', tab: promoConfig.tab });
+    tabImports.set(promoConfig.tab, { headers, rowCount: rows.length });
     if (!sharedHeaders) sharedHeaders = headers;
     console.log('');
   }
@@ -1221,7 +1411,7 @@ async function main() {
   }
 
   if (doneSets.length > 0 && sharedHeaders) {
-    await createDashboard(sheets, cfg.spreadsheetId, doneSets, sharedHeaders, cfg.formulaSep);
+    await createDashboard(sheets, cfg.spreadsheetId, doneSets, sharedHeaders, cfg.formulaSep, cfg.dashboard);
   }
 
   console.log('\nDone!');
@@ -1233,7 +1423,7 @@ if (require.main === module) {
 
 module.exports = {
   authorize, isInvalidGrantError, extractAuthCode, resolveConfig, scryfallCardToRow, parseWizardsArtCards,
-  wizardsCardToRow, quoteSheetTab, buildImageGalleryFormulas, extractWizardsContentfulToken, checkboxKey, readCheckboxMap, writeTab,
-  enrichWizardsArtCardPrices, cardmarketFeedKey, getCachedCardmarketFeed, fetchSet, fetchWizardsArtCards,
+  wizardsCardToRow, wizardsPromoCardToRow, parseWizardsGalleryCards, kebabCase, quoteSheetTab, buildImageGalleryFormulas, extractWizardsContentfulToken, checkboxKey, readCheckboxMap, writeTab, loadBulkMarkCollected, hexColor,
+  enrichWizardsArtCardPrices, cardmarketFeedKey, getCachedCardmarketFeed, buildSetSearchQuery, fetchSet, fetchWizardsArtCards, fetchWizardsPromoCards,
   parseArgs,
 };

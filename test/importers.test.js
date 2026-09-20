@@ -4,6 +4,8 @@ const assert = require('node:assert/strict');
 const {
   scryfallCardToRow,
   parseWizardsArtCards,
+  parseWizardsGalleryCards,
+  kebabCase,
   quoteSheetTab,
   wizardsCardToRow,
   extractWizardsContentfulToken,
@@ -15,6 +17,8 @@ const {
   getCachedCardmarketFeed,
   readCheckboxMap,
   writeTab,
+  buildSetSearchQuery,
+  hexColor,
 } = require('../mtg-to-sheets.js');
 
 test('converts a Scryfall JSON card to the legacy sheet columns', () => {
@@ -105,6 +109,33 @@ test('uses case-independent checkbox keys across CSV and JSON Scryfall set codes
   assert.equal(checkboxKey(' HOB ', ' 60 '), 'hob:60');
 });
 
+test('adds an exact collector-number filter to the Scryfall set query', () => {
+  assert.equal(buildSetSearchQuery('sld', ['734', '1293', '399s', '2026-1']),
+    'set:sld (cn:"734" or cn:"1293" or cn:"399s" or cn:"2026-1")');
+  assert.equal(buildSetSearchQuery('ltr'), 'set:ltr');
+});
+
+test('converts a configured Dashboard hex color to the Sheets color format', () => {
+  assert.deepEqual(hexColor('#2E7D32'), { red: 46 / 255, green: 125 / 255, blue: 50 / 255 });
+  assert.throws(() => hexColor('green'), /6-digit hex/);
+});
+
+test('preserves a checked box from the legacy unlabeled/Karte layout', async () => {
+  const sheets = { spreadsheets: { values: { get: async () => ({ data: { values: [
+    ['', 'Karte', 'multiverse_id', 'set', 'collector_number'],
+    [true, '', '123', 'LTR', '451'],
+  ] } }) } } };
+  const map = await readCheckboxMap(sheets, 'sheet-id', 'LTR');
+  assert.deepEqual(map.get('ltr:451'), { collected: true, foiled: false });
+});
+
+test('parses ordinary Wizards gallery cards and normalizes product URL values', () => {
+  assert.deepEqual(parseWizardsGalleryCards('The One Ring [ring-id]\nNot a card'), [
+    { name: 'The One Ring', entryId: 'ring-id' },
+  ]);
+  assert.equal(kebabCase('LTR | CIG Product | Regional Championship'), 'ltr-cig-product-regional-championship');
+});
+
 test('migrates legacy sheets by preserving Collected and defaulting Foiled to false', async () => {
   const sheets = { spreadsheets: { values: { get: async () => ({ data: { values: [
     ['Collected', 'Image', 'set', 'collector_number'],
@@ -171,6 +202,19 @@ test('writes Foiled second while preserving legacy Collected and user-edited lan
   const validation = batches[0].requestBody.requests.find(request => request.setDataValidation);
   assert.equal(validation.setDataValidation.range.startColumnIndex, 0);
   assert.equal(validation.setDataValidation.range.endColumnIndex, 2);
+});
+
+test('marks only configured exact keys as collected during a bulk import', async () => {
+  const updates = [];
+  const sheets = { spreadsheets: {
+    get: async () => ({ data: { sheets: [{ properties: { title: 'LTC', sheetId: 1 } }] } }),
+    values: { get: async () => ({ data: { values: [] } }), clear: async () => {}, update: async req => updates.push(req) },
+    batchUpdate: async () => ({ data: { replies: [] } }),
+  } };
+  await writeTab(sheets, 'sheet-id', 'LTC', ['set', 'collector_number'], [
+    { set: 'ltc', collector_number: '1' }, { set: 'ltc', collector_number: '2' },
+  ], null, true, new Set(['ltc:2']));
+  assert.deepEqual(updates[0].requestBody.values.slice(1).map(row => row[0]), [false, true]);
 });
 
 test('captures a blank user-edited lang value for preservation', async () => {
