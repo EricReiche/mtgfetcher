@@ -279,7 +279,7 @@ const SCRYFALL_HEADERS = [
   'multiverse_id', 'mtgo_id', 'set', 'collector_number', 'lang', 'rarity',
   'name', 'mana_cost', 'cmc', 'type_line', 'artist', 'usd_price',
   'usd_foil_price', 'eur_price', 'tix_price', 'image_uri', 'scryfall_uri',
-  'scryfall_id',
+  'scryfall_id', 'foil_available',
 ];
 
 function stringValue(value) {
@@ -308,6 +308,9 @@ function scryfallCardToRow(card) {
     image_uri:       imageUri,
     scryfall_uri:    stringValue(card.scryfall_uri),
     scryfall_id:     stringValue(card.id),
+    // `finishes` is the authoritative per-printing list. Fall back to the
+    // legacy boolean for compatibility with older Scryfall responses.
+    foil_available:  card.finishes ? card.finishes.includes('foil') : Boolean(card.foil),
   };
 }
 
@@ -500,6 +503,7 @@ function wizardsCardToRow({ code, collector_number, entryId, fallbackName, detai
     image_uri: details.face,
     scryfall_uri: '',
     scryfall_id: `wizards:${entryId}`,
+    foil_available: false,
   };
 }
 
@@ -532,6 +536,7 @@ function wizardsPromoCardToRow({ code, entryId, fallbackName, details, linkedEnt
     type_line: typeLine, artist: stringValue(details.artist),
     usd_price: '', usd_foil_price: '', eur_price: '', tix_price: '',
     image_uri: stringValue(details.face), scryfall_uri: '', scryfall_id: `wizards:${entryId}`,
+    foil_available: false,
   };
 }
 
@@ -1102,10 +1107,10 @@ async function createImageGallery(sheets, spreadsheetId, {
 // ── DASHBOARD ─────────────────────────────────────────────────────────────────
 //
 // Layout (2 columns per set, side by side):
-//   Row 1 │ "MTG Collection Dashboard"  ···  "Verbleibend: X/Y"
-//   Row 2 │ (empty)
-//   Row 3 │ MSH: 12/453  │     │ TMSH: 3/27  │     │ …
-//   Row 4+ │ <card name>  │ <#> │ <card name> │ <#> │ …   ← QUERY results
+//   Row 1 │ "MTG Collection Dashboard"  ···  "Cards: X/Y | Foils: X/Y"
+//   Row 2 │ dashboard-list dropdown ("Missing cards" / "Need foil")
+//   Row 3 │ MSH: 12/453 · Foil: 5/123  │     │ TMSH: …
+//   Row 4+ │ <card name>  │ <#> │ <card name> │ <#> │ …   ← selected QUERY results
 
 function hexColor(value) {
   const match = String(value ?? '').match(/^#?([0-9a-f]{6})$/i);
@@ -1123,14 +1128,16 @@ async function createDashboard(sheets, spreadsheetId, sets, csvHeaders, sep, das
 
   const nameIdx = csvHeaders.indexOf('name');
   const numIdx  = csvHeaders.indexOf('collector_number');
-  if (nameIdx === -1 || numIdx === -1) {
-    console.warn('  Skipping dashboard — "name"/"collector_number" columns not found');
+  const foilAvailableIdx = csvHeaders.indexOf('foil_available');
+  if (nameIdx === -1 || numIdx === -1 || foilAvailableIdx === -1) {
+    console.warn('  Skipping dashboard — required name, collector_number, or foil_available column not found');
     return;
   }
 
   // Column letters as they appear in each set tab (offset by 3 for Collected + Foiled + Image)
   const nameCol = colLetter(3 + nameIdx);
   const numCol  = colLetter(3 + numIdx);
+  const foilAvailableCol = colLetter(3 + foilAvailableIdx);
   const lastCol = colLetter(3 + csvHeaders.length - 1);
 
   const S = sep; // formula argument separator (';' for German/EU, ',' for US)
@@ -1138,9 +1145,13 @@ async function createDashboard(sheets, spreadsheetId, sets, csvHeaders, sep, das
   // Inside the QUERY string, column separator is always "," (QUERY language syntax).
   // Only the outer Sheets function argument separator (S) is locale-dependent.
   const sheetRef = tab => quoteSheetTab(tab);
-  const missingQuery  = tab => `=QUERY(${sheetRef(tab)}!A2:${lastCol}${S}"SELECT ${nameCol},${numCol} WHERE A = FALSE"${S}0)`;
+  const missingQuery  = tab => `QUERY(${sheetRef(tab)}!A2:${lastCol}${S}"SELECT ${nameCol},${numCol} WHERE A = FALSE"${S}0)`;
+  const foilQuery     = tab => `QUERY(${sheetRef(tab)}!A2:${lastCol}${S}"SELECT ${nameCol},${numCol} WHERE B = FALSE AND ${foilAvailableCol} = TRUE"${S}0)`;
+  const selectedQuery = tab => `=IF($A$2="Need foil"${S}${foilQuery(tab)}${S}${missingQuery(tab)})`;
   const countMissing  = tab => `COUNTIF(${sheetRef(tab)}!A2:A${S}FALSE)`;
   const countTotal    = tab => `COUNTA(${sheetRef(tab)}!D2:D)`;
+  const countFoilMissing = tab => `COUNTIFS(${sheetRef(tab)}!B2:B${S}FALSE${S}${sheetRef(tab)}!${foilAvailableCol}2:${foilAvailableCol}${S}TRUE)`;
+  const countFoilAvailable = tab => `COUNTIF(${sheetRef(tab)}!${foilAvailableCol}2:${foilAvailableCol}${S}TRUE)`;
 
   // ── Get or create Dashboard tab at index 0 ──────────────────────────────────
   const meta     = await sheets.spreadsheets.get({ spreadsheetId });
@@ -1170,22 +1181,24 @@ async function createDashboard(sheets, spreadsheetId, sets, csvHeaders, sep, das
   // Row 1: title left, overall remaining right
   const totalAll   = sets.map(({tab}) => countTotal(tab)).join('+');
   const missingAll = sets.map(({tab}) => countMissing(tab)).join('+');
+  const foilTotalAll = sets.map(({tab}) => countFoilAvailable(tab)).join('+');
+  const foilMissingAll = sets.map(({tab}) => countFoilMissing(tab)).join('+');
   const row1 = Array(totalCols).fill('');
   row1[0]              = 'MTG Collection Dashboard';
-  row1[totalCols - 1]  = `="Verbleibend: "&(${missingAll})&"/"&(${totalAll})`;
+  row1[totalCols - 1]  = `="Cards: "&(${missingAll})&"/"&(${totalAll})&" | Foils: "&(${foilMissingAll})&"/"&(${foilTotalAll})`;
 
-  // Row 3: per-set header  "TAB: missing/total"
+  // Row 3: per-set header  "TAB: missing/total · Foil: missing/available"
   const row3 = sets.flatMap(({tab}) => [
-    `="${tab}: "&${countMissing(tab)}&"/"&${countTotal(tab)}`,
+    `="${tab}: "&${countMissing(tab)}&"/"&${countTotal(tab)}&" · Foil: "&${countFoilMissing(tab)}&"/"&${countFoilAvailable(tab)}`,
     '',
   ]);
 
-  // Write rows 1–3 (row 2 left empty)
+  // Write rows 1–3. A2 is the compact dropdown that controls every list.
   await sheets.spreadsheets.values.update({
     spreadsheetId,
     range: 'Dashboard!A1',
     valueInputOption: 'USER_ENTERED',
-    requestBody: { values: [row1, [], row3] },
+    requestBody: { values: [row1, ['Missing cards'], row3] },
   });
 
   // Write QUERY formulas side by side starting at row 4
@@ -1195,7 +1208,7 @@ async function createDashboard(sheets, spreadsheetId, sets, csvHeaders, sep, das
       valueInputOption: 'USER_ENTERED',
       data: sets.map(({tab}, i) => ({
         range: `Dashboard!${colLetter(i * 2)}4`,
-        values: [[missingQuery(tab)]],
+        values: [[selectedQuery(tab)]],
       })),
     },
   });
@@ -1223,6 +1236,14 @@ async function createDashboard(sheets, spreadsheetId, sets, csvHeaders, sep, das
           verticalAlignment: 'MIDDLE',
         }},
         fields: 'userEnteredFormat(backgroundColor,textFormat,verticalAlignment)',
+    }},
+    // The list selector is intentionally in the wide first column.
+    { setDataValidation: {
+        range: { sheetId, startRowIndex: 1, endRowIndex: 2, startColumnIndex: 0, endColumnIndex: 1 },
+        rule: { condition: { type: 'ONE_OF_LIST', values: [
+          { userEnteredValue: 'Missing cards' },
+          { userEnteredValue: 'Need foil' },
+        ] }, strict: true, showCustomUi: true },
     }},
     // Right-align the "Verbleibend" cell
     { repeatCell: {

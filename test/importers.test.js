@@ -38,7 +38,14 @@ test('converts a Scryfall JSON card to the legacy sheet columns', () => {
     usd_price: '3.50', usd_foil_price: '5.00', eur_price: '2.99', tix_price: '0.03',
     image_uri: 'https://cards.example/bilbo.jpg',
     scryfall_uri: 'https://scryfall.example/card/hob/285', scryfall_id: 'card-id',
+    foil_available: false,
   });
+});
+
+test('records regular foil availability from Scryfall finishes', () => {
+  assert.equal(scryfallCardToRow({ finishes: ['nonfoil', 'foil'] }).foil_available, true);
+  assert.equal(scryfallCardToRow({ finishes: ['etched'] }).foil_available, false);
+  assert.equal(scryfallCardToRow({ foil: true }).foil_available, true);
 });
 
 test('uses the front-face image for a double-faced Scryfall card', () => {
@@ -89,7 +96,7 @@ test('maps an official Wizards Art Card to the same columns as a Scryfall card',
     'multiverse_id', 'mtgo_id', 'set', 'collector_number', 'lang', 'rarity',
     'name', 'mana_cost', 'cmc', 'type_line', 'artist', 'usd_price',
     'usd_foil_price', 'eur_price', 'tix_price', 'image_uri', 'scryfall_uri',
-    'scryfall_id',
+    'scryfall_id', 'foil_available',
   ]);
   assert.equal(row.set, 'HOB-ART');
   assert.equal(row.collector_number, '6/54');

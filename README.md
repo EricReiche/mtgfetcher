@@ -92,12 +92,13 @@ For each configured set it:
    - **Column A** — Collected checkbox (tick when you own it)
    - **Column B** — Foiled checkbox (tick when your copy is foil)
    - **Column C** — card image (`=IMAGE(...)` formula)
-   - **Columns D+** — all Scryfall CSV columns (name, rarity, prices, etc.)
+   - **Columns D+** — Scryfall card data (name, rarity, prices, foil availability, etc.)
 
 After all set tabs are written, it creates/updates a **Dashboard** tab (always the first tab) showing:
 - Overall "Verbleibend" (remaining) count
+- Overall and per-set foil progress, based only on printings with a regular foil available
 - Per-set missing/total counts
-- Side-by-side lists of unchecked cards per set (name + collector number)
+- A dropdown to switch the side-by-side lists between missing cards and foil-eligible cards still needing a foil
 
 ---
 
@@ -482,7 +483,7 @@ If this happens about every seven days, open your Google Cloud project’s **Goo
 | A | Collected checkbox — tick when you own the card |
 | B | Foiled checkbox — tick when your copy is foil |
 | C | Card image (`=IMAGE(url)`) |
-| D+ | Scryfall card data: name, set, collector_number, rarity, prices (usd, eur, tix), artist, etc. |
+| D+ | Scryfall card data: name, set, collector_number, rarity, prices (usd, eur, tix), artist, `foil_available`, etc. |
 
 - Rows are sorted by collector number
 - Price columns are formatted as numbers (locale-safe)
@@ -493,9 +494,12 @@ If this happens about every seven days, open your Google Cloud project’s **Goo
 
 Always the first tab. Rebuilt on every run.
 
-- **Row 1** — Title + overall "Verbleibend: X/Y" remaining count
-- **Row 3** — Per-set header: `MSH: 12/453`, `TMSH: 3/27`, …
-- **Row 4+** — Side-by-side lists of unchecked cards (name + collector number), one pair of columns per set
+- **Row 1** — Title + overall remaining and foil-progress counts
+- **Row 2** — Dropdown: **Missing cards** or **Need foil**
+- **Row 3** — Per-set card and foil progress, e.g. `MSH: 12/453 · Foil: 5/312`
+- **Row 4+** — Side-by-side lists for the selected dashboard view (name + collector number), one pair of columns per set
+
+`Need foil` includes only printings for which Scryfall reports the ordinary `foil` finish as available. Etched-only and nonfoil printings are excluded.
 
 ---
 
