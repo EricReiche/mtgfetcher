@@ -345,6 +345,7 @@ function httpGet(url) {
 const PAGE_DELAY_MS  = 550;  // slightly over 500ms to be safe
 const RETRY_DELAY_MS = 30_000;
 const MAX_RETRIES    = 3;
+const COLLECTOR_QUERY_CHUNK_SIZE = 30;
 
 function buildSetSearchQuery(code, collectorList = null) {
   const setQuery = `set:${code}`;
@@ -359,12 +360,26 @@ function buildSetSearchQuery(code, collectorList = null) {
 }
 
 async function fetchSet(code, collectorList = null) {
-  const query = buildSetSearchQuery(code, collectorList);
-  let url = `https://api.scryfall.com/cards/search?q=${encodeURIComponent(query)}&unique=prints&include_extras=true&format=json&page=1`;
   let allRows = [];
   let page = 1;
 
-  while (url) {
+  // Scryfall can reject a long parenthesized `or` expression as unclosed.
+  // Keep explicit collector-ID searches small, then merge their results.
+  const collectorChunks = collectorList?.length
+    ? Array.from(
+        { length: Math.ceil(collectorList.length / COLLECTOR_QUERY_CHUNK_SIZE) },
+        (_, index) => collectorList.slice(
+          index * COLLECTOR_QUERY_CHUNK_SIZE,
+          (index + 1) * COLLECTOR_QUERY_CHUNK_SIZE,
+        ),
+      )
+    : [null];
+
+  for (const collectorChunk of collectorChunks) {
+    const query = buildSetSearchQuery(code, collectorChunk);
+    let url = `https://api.scryfall.com/cards/search?q=${encodeURIComponent(query)}&unique=prints&include_extras=true&format=json&page=1`;
+
+    while (url) {
     process.stdout.write(`  page ${page}...`);
 
     let result;
@@ -403,6 +418,10 @@ async function fetchSet(code, collectorList = null) {
     url = response.has_more ? response.next_page : null;
     page++;
     if (url) await sleep(PAGE_DELAY_MS);
+    }
+
+    // Scryfall limits the search endpoint to two requests per second.
+    if (collectorChunk !== collectorChunks.at(-1)) await sleep(PAGE_DELAY_MS);
   }
 
   return { headers: SCRYFALL_HEADERS, rows: allRows };
