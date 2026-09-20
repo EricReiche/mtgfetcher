@@ -146,6 +146,8 @@ test('keeps non-numeric collector numbers as text in Dashboard results', async (
   const formula = writes[0].requestBody.data[0].values[0][0];
   assert.match(formula, /ARRAYFORMULA\(TO_TEXT\('LTC'!E2:E\)\)/);
   assert.match(formula, /SELECT Col1,Col2 WHERE Col3 = FALSE/);
+  assert.match(formula, /^=IFERROR\(IF\(/);
+  assert.match(formula, /"Collection completed!"\)$/);
 });
 
 test('preserves a checked box from the legacy unlabeled/Karte layout', async () => {

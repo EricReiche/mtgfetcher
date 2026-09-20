@@ -1167,7 +1167,9 @@ async function createDashboard(sheets, spreadsheetId, sets, csvHeaders, sep, das
   const dashboardData = tab => `HSTACK(${sheetRef(tab)}!${nameCol}2:${nameCol}${S}ARRAYFORMULA(TO_TEXT(${sheetRef(tab)}!${numCol}2:${numCol}))${S}${sheetRef(tab)}!A2:A${S}${sheetRef(tab)}!B2:B${S}${sheetRef(tab)}!${foilAvailableCol}2:${foilAvailableCol})`;
   const missingQuery  = tab => `QUERY(${dashboardData(tab)}${S}"SELECT Col1,Col2 WHERE Col3 = FALSE"${S}0)`;
   const foilQuery     = tab => `QUERY(${dashboardData(tab)}${S}"SELECT Col1,Col2 WHERE Col4 = FALSE AND Col5 = TRUE"${S}0)`;
-  const selectedQuery = tab => `=IF($A$2="Need foil"${S}${foilQuery(tab)}${S}${missingQuery(tab)})`;
+  // QUERY returns #N/A when it has no matching rows.  Treat that as the useful
+  // completion state for a set instead of exposing Sheets' implementation detail.
+  const selectedQuery = tab => `=IFERROR(IF($A$2="Need foil"${S}${foilQuery(tab)}${S}${missingQuery(tab)})${S}"Collection completed!")`;
   const countMissing  = tab => `COUNTIF(${sheetRef(tab)}!A2:A${S}FALSE)`;
   const countTotal    = tab => `COUNTA(${sheetRef(tab)}!D2:D)`;
   const countFoilMissing = tab => `COUNTIFS(${sheetRef(tab)}!B2:B${S}FALSE${S}${sheetRef(tab)}!${foilAvailableCol}2:${foilAvailableCol}${S}TRUE)`;
