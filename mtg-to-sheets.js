@@ -761,6 +761,65 @@ function quoteSheetTab(tabName) {
   return `'${String(tabName).replaceAll("'", "''")}'`;
 }
 
+// Google Sheets enforces a per-user write quota.  A single import can issue
+// several writes per tab (clear, values, formulas, and formatting), so pause
+// and retry quota responses instead of abandoning the whole import.
+const SHEETS_QUOTA_RETRY_DELAYS_MS = [5_000, 10_000, 20_000, 40_000, 60_000];
+
+function isSheetsWriteQuotaError(error) {
+  const status = error?.code ?? error?.response?.status;
+  const message = [error?.message, error?.response?.data?.error?.message]
+    .filter(Boolean)
+    .join(' ');
+  return status === 429
+    || (status === 403 && /quota|rate limit|resource exhausted/i.test(message))
+    || /quota exceeded.*write requests|write requests.*quota exceeded/i.test(message);
+}
+
+function wait(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function withSheetsWriteRetry(description, request, {
+  delays = SHEETS_QUOTA_RETRY_DELAYS_MS,
+  sleep = wait,
+} = {}) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await request();
+    } catch (error) {
+      if (!isSheetsWriteQuotaError(error) || attempt >= delays.length) throw error;
+      const delay = delays[attempt];
+      console.warn(`  Sheets write quota reached while ${description}; waiting ${Math.ceil(delay / 1000)}s before retry (${attempt + 1}/${delays.length})…`);
+      await sleep(delay);
+    }
+  }
+}
+
+function withRetriedSheetsWrites(sheets) {
+  const spreadsheets = sheets.spreadsheets;
+  const values = spreadsheets.values;
+  const wrap = (method, description) => request => withSheetsWriteRetry(description(request), () => method.call(values, request));
+
+  // Google API clients expose methods such as spreadsheets.get via their
+  // prototype.  Delegate rather than spread-copying so read methods remain
+  // available while only write methods are replaced.
+  const retriedValues = Object.create(values);
+  retriedValues.clear = wrap(values.clear, request => `clearing ${request.range}`);
+  retriedValues.update = wrap(values.update, request => `writing ${request.range}`);
+  retriedValues.batchUpdate = wrap(values.batchUpdate, () => 'writing values');
+
+  const retriedSpreadsheets = Object.create(spreadsheets);
+  retriedSpreadsheets.values = retriedValues;
+  retriedSpreadsheets.batchUpdate = request => withSheetsWriteRetry(
+    'applying sheet formatting', () => spreadsheets.batchUpdate(request),
+  );
+
+  const retriedSheets = Object.create(sheets);
+  retriedSheets.spreadsheets = retriedSpreadsheets;
+  return retriedSheets;
+}
+
 function buildImageGalleryFormulas(sourceTab, imageColumn, imageCount, columns = 3) {
   if (!Number.isInteger(imageCount) || imageCount < 0) throw new Error('Image gallery imageCount must be a non-negative integer');
   if (!Number.isInteger(columns) || columns < 1) throw new Error('Image gallery columns must be a positive integer');
@@ -862,6 +921,7 @@ async function readCheckboxMap(sheets, spreadsheetId, tabName) {
 // ── WRITE ONE TAB ─────────────────────────────────────────────────────────────
 
 async function writeTab(sheets, spreadsheetId, tabName, csvHeaders, rows, imageColOverride, preserveChecks, bulkCollectedKeys = new Set(), headerColor = null) {
+  sheets = withRetriedSheetsWrites(sheets);
   // Snapshot existing checkbox and language values before we clear anything.
   // Language is always preserved; preserveChecks only controls the checkboxes.
   const preservedMap = await readCheckboxMap(sheets, spreadsheetId, tabName);
@@ -1074,6 +1134,7 @@ async function writeTab(sheets, spreadsheetId, tabName, csvHeaders, rows, imageC
 async function createImageGallery(sheets, spreadsheetId, {
   sourceTab, tab, columns = 3, columnWidth = 250, rowHeight = 350,
 }, sourceHeaders, sourceRowCount) {
+  sheets = withRetriedSheetsWrites(sheets);
   if (!sourceTab || !tab) throw new Error('sceneImageGallery needs both "sourceTab" and "tab"');
   const imageIndex = findImageColIdx(sourceHeaders, null);
   if (imageIndex < 0) throw new Error(`Could not find an image URL column for gallery source "${sourceTab}"`);
@@ -1143,6 +1204,7 @@ function hexColor(value) {
 }
 
 async function createDashboard(sheets, spreadsheetId, sets, csvHeaders, sep, dashboard = {}) {
+  sheets = withRetriedSheetsWrites(sheets);
   console.log('\nBuilding Dashboard…');
 
   const nameIdx = csvHeaders.indexOf('name');
@@ -1467,6 +1529,6 @@ if (require.main === module) {
 module.exports = {
   authorize, isInvalidGrantError, extractAuthCode, resolveConfig, scryfallCardToRow, parseWizardsArtCards,
   wizardsCardToRow, wizardsPromoCardToRow, parseWizardsGalleryCards, kebabCase, quoteSheetTab, buildImageGalleryFormulas, extractWizardsContentfulToken, checkboxKey, readCheckboxMap, writeTab, loadBulkMarkCollected, hexColor,
-  enrichWizardsArtCardPrices, cardmarketFeedKey, getCachedCardmarketFeed, buildSetSearchQuery, fetchSet, fetchWizardsArtCards, fetchWizardsPromoCards, createDashboard,
+  enrichWizardsArtCardPrices, cardmarketFeedKey, getCachedCardmarketFeed, buildSetSearchQuery, fetchSet, fetchWizardsArtCards, fetchWizardsPromoCards, createDashboard, isSheetsWriteQuotaError, withSheetsWriteRetry, withRetriedSheetsWrites,
   parseArgs,
 };

@@ -20,7 +20,44 @@ const {
   writeTab,
   buildSetSearchQuery,
   hexColor,
+  isSheetsWriteQuotaError,
+  withSheetsWriteRetry,
+  withRetriedSheetsWrites,
 } = require('../mtg-to-sheets.js');
+
+test('waits and retries a Sheets write quota response', async () => {
+  let calls = 0;
+  const waits = [];
+  const result = await withSheetsWriteRetry('writing A1', async () => {
+    calls++;
+    if (calls < 3) {
+      const error = new Error("Quota exceeded for quota metric 'Write requests'");
+      error.code = 429;
+      throw error;
+    }
+    return 'written';
+  }, { delays: [1, 2], sleep: async delay => { waits.push(delay); } });
+
+  assert.equal(result, 'written');
+  assert.equal(calls, 3);
+  assert.deepEqual(waits, [1, 2]);
+  assert.equal(isSheetsWriteQuotaError({ code: 429 }), true);
+  assert.equal(isSheetsWriteQuotaError(new Error('network unavailable')), false);
+});
+
+test('keeps prototype-based Google Sheets read methods when wrapping writes', async () => {
+  const values = Object.create({
+    clear: async () => {}, update: async () => {}, batchUpdate: async () => {},
+  });
+  const spreadsheets = Object.create({
+    get: async () => 'metadata',
+    batchUpdate: async () => {},
+  });
+  spreadsheets.values = values;
+
+  const wrapped = withRetriedSheetsWrites({ spreadsheets });
+  assert.equal(await wrapped.spreadsheets.get(), 'metadata');
+});
 
 test('converts a Scryfall JSON card to the legacy sheet columns', () => {
   const row = scryfallCardToRow({
