@@ -1157,15 +1157,16 @@ async function createDashboard(sheets, spreadsheetId, sets, csvHeaders, sep, das
   const nameCol = colLetter(3 + nameIdx);
   const numCol  = colLetter(3 + numIdx);
   const foilAvailableCol = colLetter(3 + foilAvailableIdx);
-  const lastCol = colLetter(3 + csvHeaders.length - 1);
 
   const S = sep; // formula argument separator (';' for German/EU, ',' for US)
 
-  // Inside the QUERY string, column separator is always "," (QUERY language syntax).
-  // Only the outer Sheets function argument separator (S) is locale-dependent.
+  // Query infers a mixed collector-number column as numeric, which turns values
+  // such as "386z" into blanks. Build a small virtual table and force that
+  // display column to text before QUERY sees it.
   const sheetRef = tab => quoteSheetTab(tab);
-  const missingQuery  = tab => `QUERY(${sheetRef(tab)}!A2:${lastCol}${S}"SELECT ${nameCol},${numCol} WHERE A = FALSE"${S}0)`;
-  const foilQuery     = tab => `QUERY(${sheetRef(tab)}!A2:${lastCol}${S}"SELECT ${nameCol},${numCol} WHERE B = FALSE AND ${foilAvailableCol} = TRUE"${S}0)`;
+  const dashboardData = tab => `HSTACK(${sheetRef(tab)}!${nameCol}2:${nameCol}${S}TO_TEXT(${sheetRef(tab)}!${numCol}2:${numCol})${S}${sheetRef(tab)}!A2:A${S}${sheetRef(tab)}!B2:B${S}${sheetRef(tab)}!${foilAvailableCol}2:${foilAvailableCol})`;
+  const missingQuery  = tab => `QUERY(${dashboardData(tab)}${S}"SELECT Col1,Col2 WHERE Col3 = FALSE"${S}0)`;
+  const foilQuery     = tab => `QUERY(${dashboardData(tab)}${S}"SELECT Col1,Col2 WHERE Col4 = FALSE AND Col5 = TRUE"${S}0)`;
   const selectedQuery = tab => `=IF($A$2="Need foil"${S}${foilQuery(tab)}${S}${missingQuery(tab)})`;
   const countMissing  = tab => `COUNTIF(${sheetRef(tab)}!A2:A${S}FALSE)`;
   const countTotal    = tab => `COUNTA(${sheetRef(tab)}!D2:D)`;
@@ -1464,6 +1465,6 @@ if (require.main === module) {
 module.exports = {
   authorize, isInvalidGrantError, extractAuthCode, resolveConfig, scryfallCardToRow, parseWizardsArtCards,
   wizardsCardToRow, wizardsPromoCardToRow, parseWizardsGalleryCards, kebabCase, quoteSheetTab, buildImageGalleryFormulas, extractWizardsContentfulToken, checkboxKey, readCheckboxMap, writeTab, loadBulkMarkCollected, hexColor,
-  enrichWizardsArtCardPrices, cardmarketFeedKey, getCachedCardmarketFeed, buildSetSearchQuery, fetchSet, fetchWizardsArtCards, fetchWizardsPromoCards,
+  enrichWizardsArtCardPrices, cardmarketFeedKey, getCachedCardmarketFeed, buildSetSearchQuery, fetchSet, fetchWizardsArtCards, fetchWizardsPromoCards, createDashboard,
   parseArgs,
 };

@@ -12,6 +12,7 @@ const {
   checkboxKey,
   enrichWizardsArtCardPrices,
   buildImageGalleryFormulas,
+  createDashboard,
   resolveConfig,
   cardmarketFeedKey,
   getCachedCardmarketFeed,
@@ -125,6 +126,26 @@ test('adds an exact collector-number filter to the Scryfall set query', () => {
 test('converts a configured Dashboard hex color to the Sheets color format', () => {
   assert.deepEqual(hexColor('#2E7D32'), { red: 46 / 255, green: 125 / 255, blue: 50 / 255 });
   assert.throws(() => hexColor('green'), /6-digit hex/);
+});
+
+test('keeps non-numeric collector numbers as text in Dashboard results', async () => {
+  const writes = [];
+  const sheets = { spreadsheets: {
+    get: async () => ({ data: { sheets: [{ properties: { title: 'Dashboard', sheetId: 9, index: 0 } }] } }),
+    values: {
+      clear: async () => {},
+      update: async () => {},
+      batchUpdate: async request => { writes.push(request); },
+    },
+    batchUpdate: async () => {},
+  } };
+
+  await createDashboard(sheets, 'sheet-id', [{ tab: 'LTC' }],
+    ['set', 'collector_number', 'name', 'foil_available'], ';');
+
+  const formula = writes[0].requestBody.data[0].values[0][0];
+  assert.match(formula, /TO_TEXT\('LTC'!E2:E\)/);
+  assert.match(formula, /SELECT Col1,Col2 WHERE Col3 = FALSE/);
 });
 
 test('preserves a checked box from the legacy unlabeled/Karte layout', async () => {
